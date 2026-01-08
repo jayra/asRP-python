@@ -1,0 +1,8 @@
+services:
+  identity-api:
+    build:
+      context: ./services/identity-api
+    ports:
+      - "8001:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
