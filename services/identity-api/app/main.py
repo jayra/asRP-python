@@ -1,14 +1,20 @@
 from fastapi import FastAPI
 
-app = FastAPI(title="Identity API", version="0.1.0")
+from app.api.v1.routes import router as v1_router
+from app.core.config import settings
+from app.core.logging import configure_logging
 
+configure_logging()
+
+app = FastAPI(title=settings.app_name, version=settings.app_version)
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "service": "identity-api",
+        "version": settings.app_version,
+        "env": settings.environment,
+    }
 
-
-@app.get("/v1/ping")
-def ping():
-    return {"message": "pong"}
-
+app.include_router(v1_router)

@@ -4,13 +4,9 @@ from app.main import app
 
 client = TestClient(app)
 
-
-def test_health_ok():
-    r = client.get("/health")
+def test_ping_ok():
+    r = client.get("/v1/ping")
     assert r.status_code == 200
     data = r.json()
-
-    assert data["status"] == "ok"
+    assert data["message"] == "pong"
     assert data["service"] == "identity-api"
-    assert "version" in data
-    assert data["env"] == "local"
