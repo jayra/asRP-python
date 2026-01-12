@@ -9,6 +9,22 @@ services:
       - LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
 
+  catalog-db:
+    image: postgres:16
+    environment:
+      - POSTGRES_DB=catalog_db
+      - POSTGRES_USER=catalog_app
+      - POSTGRES_PASSWORD=catalog_app_pwd
+    ports:
+      - "5433:5432"
+    volumes:
+      - catalog_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catalog_app -d catalog_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   catalog-api:
     build:
       context: ./services/catalog-api
@@ -18,3 +34,10 @@ services:
       - ENVIRONMENT=local
       - LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql+psycopg://catalog_app:catalog_app_pwd@catalog-db:5432/catalog_db
+    depends_on:
+      catalog-db:
+        condition: service_healthy
+
+volumes:
+  catalog_db_data:
