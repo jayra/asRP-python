@@ -8,3 +8,13 @@ services:
       - ENVIRONMENT=local
       - LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
+
+  catalog-api:
+    build:
+      context: ./services/catalog-api
+    ports:
+      - "8002:8000"
+    environment:
+      - ENVIRONMENT=local
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
