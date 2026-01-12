@@ -1,3 +1,3 @@
-# Identity API
+# Catalog API
 
-Microservicio de identidad.
+Microservicio de Catálogo.
