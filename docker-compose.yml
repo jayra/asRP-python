@@ -39,5 +39,21 @@ services:
       catalog-db:
         condition: service_healthy
 
+  catalog-test-db:
+    image: postgres:16
+    environment:
+      - POSTGRES_DB=catalog_test_db
+      - POSTGRES_USER=catalog_test_app
+      - POSTGRES_PASSWORD=catalog_test_app_pwd
+    ports:
+      - "5434:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catalog_test_app -d catalog_test_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   catalog_db_data:
