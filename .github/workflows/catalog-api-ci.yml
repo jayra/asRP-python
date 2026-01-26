@@ -20,9 +20,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Show compose services (debug)
+        run: |
+          docker compose version
+          docker compose config --services
+
       - name: Start stack (catalog-api + deps)
         run: |
-          docker compose up -d --build catalog-api keycloak keycloak-db catalog-db
+          # --- FIX (CI): no hardcodear keycloak/keycloak-db/catalog-db; arrancar el target y que compose resuelva depends_on ---
+          docker compose up -d --build catalog-api
           docker compose ps
 
       - name: Wait for catalog-api
