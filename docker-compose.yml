@@ -8,13 +8,21 @@ services:
       - ENVIRONMENT=local
       - LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
+    networks:
+      - backend
+    restart: unless-stopped
 
+  # -------------------------
+  # Catalog DB
+  # -------------------------
   catalog-db:
     image: postgres:16
     environment:
       - POSTGRES_DB=catalog_db
       - POSTGRES_USER=catalog_app
-      - POSTGRES_PASSWORD=catalog_app_pwd
+      # [FIX] password solo en env_file (secreto)
+    env_file:
+      - .env.catalog-db.secrets
     ports:
       - "5433:5432"
     volumes:
@@ -24,27 +32,45 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - backend
+    restart: unless-stopped
 
+  # -------------------------
+  # Catalog API
+  # -------------------------
   catalog-api:
     build:
       context: ./services/catalog-api
     ports:
       - "8002:8000"
+    env_file:
+      - .env
+      - .env.catalog-api
+      - .env.catalog-api.secrets
     environment:
-      - ENVIRONMENT=local
-      - LOG_LEVEL=INFO
-      - PYTHONUNBUFFERED=1
-      - DATABASE_URL=postgresql+psycopg://catalog_app:catalog_app_pwd@catalog-db:5432/catalog_db
+      # [FIX] Issuer canónico (unifica Browser + Docker). Evita 401 "Invalid token"
+      OIDC_ISSUER_EXPECTED: "http://keycloak.localtest.me:8080/realms/asrp"
+      OIDC_DISCOVERY_URL: "http://keycloak.localtest.me:8080/realms/asrp/.well-known/openid-configuration"
+      OIDC_AUDIENCE: "asrp-catalog"
     depends_on:
       catalog-db:
         condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
 
+  # -------------------------
+  # Catalog Test DB
+  # -------------------------
   catalog-test-db:
     image: postgres:16
     environment:
       - POSTGRES_DB=catalog_test_db
       - POSTGRES_USER=catalog_test_app
-      - POSTGRES_PASSWORD=catalog_test_app_pwd
+      # [FIX] password solo en env_file (secreto)
+    env_file:
+      - .env.catalog-test-db.secrets
     ports:
       - "5434:5432"
     tmpfs:
@@ -54,6 +80,99 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # -------------------------
+  # Keycloak DB
+  # -------------------------
+  keycloak-db:
+    image: postgres:16
+    environment:
+      - POSTGRES_DB=keycloak
+      - POSTGRES_USER=keycloak
+      # [FIX] password solo en env_file (secreto)
+    env_file:
+      - .env.keycloak-db.secrets
+    volumes:
+      - keycloak_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # -------------------------
+  # Keycloak
+  # -------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0.6
+    command: ["start-dev", "--health-enabled=true", "--metrics-enabled=true"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL_HOST: keycloak-db
+      KC_DB_URL_DATABASE: keycloak
+      KC_DB_USERNAME: keycloak
+      # [FIX] KC_DB_PASSWORD viene de env_file
+
+      # [FIX] Hostname canónico (Browser y Docker)
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: keycloak.localtest.me
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_PROXY: edge
+
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+    env_file:
+      - .env.keycloak.secrets
+    ports:
+      - "8080:8080"
+      - "9000:9000"
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      backend:
+        aliases:
+          # [FIX] Alias dentro de Docker para resolver el mismo hostname canónico
+          - keycloak.localtest.me
+    restart: unless-stopped
+
+  # -------------------------
+  # API Gateway
+  # -------------------------
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+    environment:
+      PORT: "4000"
+      CATALOG_UPSTREAM: "http://catalog-api:8000"
+      KEYCLOAK_ISSUER: "http://keycloak.localtest.me:8080/realms/asrp"   # [FIX]
+      KEYCLOAK_JWKS_URL: "http://keycloak.localtest.me:8080/realms/asrp/protocol/openid-connect/certs"  # [FIX]
+      EXPECTED_AUDIENCE: "asrp-catalog"
+    ports:
+      - "4000:4000"
+    depends_on:
+      - keycloak
+      - catalog-api
+    networks:
+      - backend
+    restart: unless-stopped
+
+networks:
+  backend:
+    driver: bridge
 
 volumes:
   catalog_db_data:
+  keycloak_pgdata:

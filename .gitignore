@@ -1,16 +1,63 @@
+# =========================
 # Python
+# =========================
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 .venv/
-.env
-.env.*
+.venv*/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
 
+# =========================
 # IDE
+# =========================
 .vscode/
 .idea/
 
+# =========================
 # OS
+# =========================
 .DS_Store
+Thumbs.db
 
+# =========================
 # Logs
+# =========================
 *.log
+
+# =========================
+# Env / Config (NO commitear valores reales)
+# =========================
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Overrides locales
+.env.*.local
+*.local.env
+
+# Tokens / temporales de autenticación
+.env.tokens
+
+# =========================
+# Secretos (NO commitear)
+# =========================
+.env.secrets
+.env.*.secrets
+*.secrets
+*.key
+*.pem
+
+# =========================
+# Backups / artifacts locales
+# =========================
+backups/

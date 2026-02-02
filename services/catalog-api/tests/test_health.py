@@ -1,22 +1,13 @@
-# tests/test_health.py
-
-from __future__ import annotations
-
-from fastapi.testclient import TestClient
-
-from app.main import app
-
-client = TestClient(app)
+# services/catalog-api/tests/test_health.py
+# Tests de integración HTTP contra el contenedor (portfolio).
+import requests
 
 
-def test_health_ok():
-    r = client.get("/health")
-    assert r.status_code == 200
+def test_health_ok(base_url: str):
+    r = requests.get(f"{base_url}/health", timeout=10)
+    assert r.status_code == 200, r.text
 
     data = r.json()
-    assert data["status"] == "ok"
-    assert data["service"] == "catalog-api"
-    assert data["version"] == "0.1.0"
-
-    # --- FIX (tests): en ejecución de tests el entorno correcto es "test" ---
-    assert data["env"] == "test"
+    assert data.get("status") == "ok"
+    assert data.get("service") == "catalog-api"
+    # No forzamos env/version aquí porque dependen del Settings interno y del despliegue.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware  # --- FIX (CORS): habilitar middleware CORS ---
 
 from app.api.v1.routes import router as v1_router
 from app.core.config import settings
@@ -13,6 +14,20 @@ _app_version = getattr(settings, "app_version", "0.1.0")  # --- FIX: fallback se
 
 app = FastAPI(title=_app_name, version=_app_version)
 
+# --- FIX (CORS): permitir el front (Vite) sin abrir "*" ---
+# En dev puedes sobreescribir con CORS_ALLOWED_ORIGINS="http://localhost:5173,http://127.0.0.1:5173"
+_raw_origins = (
+    os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173")  # --- FIX: default Vite ---
+)
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,  # --- FIX (CORS): middleware oficial FastAPI/Starlette ---
+    allow_origins=_allowed_origins,  # --- FIX: orígenes explícitos (enterprise)
+    allow_credentials=False,  # --- FIX: normalmente False con Bearer token
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],  # --- FIX: preflight
+    allow_headers=["Authorization", "Content-Type", "Accept"],  # --- FIX: headers típicos
+)
 
 @app.get("/health")
 def health():
