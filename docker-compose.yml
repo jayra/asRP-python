@@ -1,4 +1,7 @@
 services:
+  # -------------------------
+  # Identity API (si la usas)
+  # -------------------------
   identity-api:
     build:
       context: ./services/identity-api
@@ -13,16 +16,16 @@ services:
     restart: unless-stopped
 
   # -------------------------
-  # Catalog DB
+  # Catalog DB (PostgreSQL - Postgres Structured Query Language)
   # -------------------------
   catalog-db:
     image: postgres:16
     environment:
       - POSTGRES_DB=catalog_db
       - POSTGRES_USER=catalog_app
-      # [FIX] password solo en env_file (secreto)
+      # [SECURITY] El password NO va aquí. Va en env_file (fichero ignorado por Git).
     env_file:
-      - .env.catalog-db.secrets
+      - .env.catalog-db.secrets # [SECURITY] POSTGRES_PASSWORD
     ports:
       - "5433:5432"
     volumes:
@@ -47,12 +50,7 @@ services:
     env_file:
       - .env
       - .env.catalog-api
-      - .env.catalog-api.secrets
-    environment:
-      # [FIX] Issuer canónico (unifica Browser + Docker). Evita 401 "Invalid token"
-      OIDC_ISSUER_EXPECTED: "http://keycloak.localtest.me:8080/realms/asrp"
-      OIDC_DISCOVERY_URL: "http://keycloak.localtest.me:8080/realms/asrp/.well-known/openid-configuration"
-      OIDC_AUDIENCE: "asrp-catalog"
+      - .env.catalog-api.secrets # [SECURITY] ignorado por Git
     depends_on:
       catalog-db:
         condition: service_healthy
@@ -68,9 +66,9 @@ services:
     environment:
       - POSTGRES_DB=catalog_test_db
       - POSTGRES_USER=catalog_test_app
-      # [FIX] password solo en env_file (secreto)
+      # [SECURITY] El password NO va aquí. Va en env_file.
     env_file:
-      - .env.catalog-test-db.secrets
+      - .env.catalog-test-db.secrets # [SECURITY] POSTGRES_PASSWORD
     ports:
       - "5434:5432"
     tmpfs:
@@ -92,9 +90,9 @@ services:
     environment:
       - POSTGRES_DB=keycloak
       - POSTGRES_USER=keycloak
-      # [FIX] password solo en env_file (secreto)
+      # [SECURITY] El password NO va aquí. Va en env_file.
     env_file:
-      - .env.keycloak-db.secrets
+      - .env.keycloak-db.secrets # [SECURITY] POSTGRES_PASSWORD
     volumes:
       - keycloak_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -107,49 +105,75 @@ services:
     restart: unless-stopped
 
   # -------------------------
-  # Keycloak
+  # Keycloak (OIDC - OpenID Connect)
   # -------------------------
   keycloak:
     image: quay.io/keycloak/keycloak:25.0.6
+
+    # start-dev SOLO en local. En cloud: "start" + TLS/Proxy/hostname strict.
     command: ["start-dev", "--health-enabled=true", "--metrics-enabled=true"]
+
     environment:
+      # --- DB ---
       KC_DB: postgres
       KC_DB_URL_HOST: keycloak-db
       KC_DB_URL_DATABASE: keycloak
       KC_DB_USERNAME: keycloak
-      # [FIX] KC_DB_PASSWORD viene de env_file
+      # [SECURITY] KC_DB_PASSWORD viene desde env_file (.env.keycloak.secrets)
 
-      # [FIX] Hostname canónico (Browser y Docker)
+      # --- HTTP/Proxy/Hostname (issuer estable) ---
+      #
+      # [ENTERPRISE] Objetivo: que el issuer (iss) de los JWT (JSON Web Token) sea SIEMPRE el mismo,
+      # tanto para browser/host como para tráfico dentro de Docker.
+      #
+      # Con esto, el issuer y el discovery/jwks se publican con:
+      #   http://keycloak.localtest.me:8080
       KC_HTTP_ENABLED: "true"
-      KC_HOSTNAME: keycloak.localtest.me
-      KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_HTTPS: "false"
       KC_PROXY: edge
 
+      KC_HOSTNAME: keycloak.localtest.me
+      KC_HOSTNAME_URL: "http://keycloak.localtest.me:8080"       # [ENTERPRISE] issuer/metadata estable
+      KC_HOSTNAME_ADMIN_URL: "http://keycloak.localtest.me:8080" # [ENTERPRISE] admin console estable
+
+      # [DEV] En cloud: KC_HOSTNAME_STRICT=true y KC_HOSTNAME_STRICT_HTTPS=true con HTTPS real.
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+
+      # --- Observabilidad ---
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
+
     env_file:
-      - .env.keycloak.secrets
+      - .env.keycloak.secrets # [SECURITY] KEYCLOAK_ADMIN / KEYCLOAK_ADMIN_PASSWORD / KC_DB_PASSWORD
+
     ports:
       - "8080:8080"
       - "9000:9000"
+
     depends_on:
       keycloak-db:
         condition: service_healthy
+
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/health/ready || exit 1"]
+      # [FIX] Fallback curl/wget (algunas imágenes no traen curl).
+      test:
+        [
+          "CMD-SHELL",
+          "sh -lc 'command -v curl >/dev/null && curl -fsS http://localhost:9000/health/ready || wget -qO- http://localhost:9000/health/ready | grep -q \"\\\"status\\\":\\\"UP\\\"\"'"
+        ]
       interval: 10s
       timeout: 5s
       retries: 15
+
     networks:
       backend:
         aliases:
-          # [FIX] Alias dentro de Docker para resolver el mismo hostname canónico
+          # [ENTERPRISE] Alias DNS interno para que los contenedores puedan usar el hostname “público”.
           - keycloak.localtest.me
     restart: unless-stopped
 
   # -------------------------
-  # API Gateway
+  # API Gateway (Express)
   # -------------------------
   api-gateway:
     build:
@@ -157,14 +181,60 @@ services:
     environment:
       PORT: "4000"
       CATALOG_UPSTREAM: "http://catalog-api:8000"
-      KEYCLOAK_ISSUER: "http://keycloak.localtest.me:8080/realms/asrp"   # [FIX]
-      KEYCLOAK_JWKS_URL: "http://keycloak.localtest.me:8080/realms/asrp/protocol/openid-connect/certs"  # [FIX]
+
+      # [ENTERPRISE] Alinear issuer + JWKS (JSON Web Key Set) a hostname estable
+      KEYCLOAK_ISSUER: "http://keycloak.localtest.me:8080/realms/asrp"
+      KEYCLOAK_JWKS_URL: "http://keycloak.localtest.me:8080/realms/asrp/protocol/openid-connect/certs"
       EXPECTED_AUDIENCE: "asrp-catalog"
     ports:
       - "4000:4000"
     depends_on:
       - keycloak
       - catalog-api
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # -------------------------
+  # Orders (próximo microservicio) - profile opcional
+  # -------------------------
+  # Para activarlo cuando lo implementemos:
+  #   docker compose --profile orders up -d --build
+  orders-db:
+    profiles: ["orders"]
+    image: postgres:16
+    environment:
+      - POSTGRES_DB=orders_db
+      - POSTGRES_USER=orders_app
+      # [SECURITY] El password NO va aquí. Va en env_file.
+    env_file:
+      - .env.orders-db.secrets # [SECURITY] POSTGRES_PASSWORD (ignorado por Git)
+    ports:
+      - "5435:5432"
+    volumes:
+      - orders_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orders_app -d orders_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+    restart: unless-stopped
+
+  orders-api:
+    profiles: ["orders"]
+    build:
+      context: ./services/orders-api
+    ports:
+      - "8003:8000"
+    env_file:
+      - .env
+      - .env.orders-api
+      - .env.orders-api.secrets
+    depends_on:
+      orders-db:
+        condition: service_healthy
     networks:
       - backend
     restart: unless-stopped
@@ -176,3 +246,4 @@ networks:
 volumes:
   catalog_db_data:
   keycloak_pgdata:
+  orders_db_data:
