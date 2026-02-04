@@ -1,21 +1,17 @@
 from fastapi import FastAPI
-from app.routers.health import router as health_router
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(
-    title="orders-api",
-    version="0.1.0",
+from app.api.routes import router
+
+app = FastAPI(title="orders-api", version="0.1.0")
+
+# [SECURITY] En prod, CORS se restringe por dominios reales.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
-# Routers
-app.include_router(health_router)
-
-
-@app.get("/v1/orders")
-def list_orders():
-    # [ENTERPRISE] Placeholder: en el siguiente paso añadimos:
-    # - Validación JWT (JSON Web Token)
-    # - RBAC (Role-Based Access Control) orders_read/orders_write
-    return [
-        {"id": "ORD-001", "status": "NEW"},
-        {"id": "ORD-002", "status": "PAID"},
-    ]
+app.include_router(router)

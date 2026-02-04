@@ -123,17 +123,13 @@ services:
 
       # --- HTTP/Proxy/Hostname (issuer estable) ---
       #
-      # [ENTERPRISE] Objetivo: que el issuer (iss) de los JWT (JSON Web Token) sea SIEMPRE el mismo,
-      # tanto para browser/host como para tráfico dentro de Docker.
-      #
-      # Con esto, el issuer y el discovery/jwks se publican con:
-      #   http://keycloak.localtest.me:8080
+      # [FIX][ENTERPRISE] Config mínima y estable para issuer consistente:
+      #  - KC_HOSTNAME + alias de red ya unifican el issuer para browser + docker.
+      #  - Evitamos KC_HOSTNAME_URL / KC_HOSTNAME_ADMIN_URL para no tumbar el proceso si hay incompatibilidad.
       KC_HTTP_ENABLED: "true"
       KC_PROXY: edge
 
       KC_HOSTNAME: keycloak.localtest.me
-      KC_HOSTNAME_URL: "http://keycloak.localtest.me:8080"       # [ENTERPRISE] issuer/metadata estable
-      KC_HOSTNAME_ADMIN_URL: "http://keycloak.localtest.me:8080" # [ENTERPRISE] admin console estable
 
       # [DEV] En cloud: KC_HOSTNAME_STRICT=true y KC_HOSTNAME_STRICT_HTTPS=true con HTTPS real.
       KC_HOSTNAME_STRICT: "false"
@@ -154,12 +150,15 @@ services:
       keycloak-db:
         condition: service_healthy
 
+    # [FIX] Healthcheck robusto (no asumimos que exista curl).
+    # - Intentamos curl si está
+    # - si no, intentamos wget
+    # - si no, fallamos
     healthcheck:
-      # [FIX] Fallback curl/wget (algunas imágenes no traen curl).
       test:
         [
           "CMD-SHELL",
-          "sh -lc 'command -v curl >/dev/null && curl -fsS http://localhost:9000/health/ready || wget -qO- http://localhost:9000/health/ready | grep -q \"\\\"status\\\":\\\"UP\\\"\"'"
+          "sh -lc 'if command -v curl >/dev/null; then curl -fsS http://localhost:9000/health/ready; elif command -v wget >/dev/null; then wget -qO- http://localhost:9000/health/ready; else echo \"no curl/wget\"; exit 1; fi | grep -q \"\\\"status\\\"\"'"
         ]
       interval: 10s
       timeout: 5s
@@ -168,7 +167,7 @@ services:
     networks:
       backend:
         aliases:
-          # [ENTERPRISE] Alias DNS interno para que los contenedores puedan usar el hostname “público”.
+          # [ENTERPRISE] Alias DNS interno para que contenedores usen el mismo hostname que el navegador
           - keycloak.localtest.me
     restart: unless-stopped
 
@@ -182,7 +181,7 @@ services:
       PORT: "4000"
       CATALOG_UPSTREAM: "http://catalog-api:8000"
 
-      # [ENTERPRISE] Alinear issuer + JWKS (JSON Web Key Set) a hostname estable
+      # [ENTERPRISE] Alinear issuer + JWKS (JSON Web Key Set) al hostname estable
       KEYCLOAK_ISSUER: "http://keycloak.localtest.me:8080/realms/asrp"
       KEYCLOAK_JWKS_URL: "http://keycloak.localtest.me:8080/realms/asrp/protocol/openid-connect/certs"
       EXPECTED_AUDIENCE: "asrp-catalog"
