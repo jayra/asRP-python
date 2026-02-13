@@ -1,63 +1,23 @@
-# =========================
 # Python
-# =========================
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
 .venv/
-.venv*/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.pytype/
-.coverage
-htmlcov/
-dist/
-build/
-*.egg-info/
 
-# =========================
-# IDE
-# =========================
-.vscode/
-.idea/
-
-# =========================
-# OS
-# =========================
-.DS_Store
-Thumbs.db
-
-# =========================
-# Logs
-# =========================
-*.log
-
-# =========================
-# Env / Config (NO commitear valores reales)
-# =========================
+# Env (secrets y locales)
 .env
 .env.*
+
+# [FIX] Permitimos commitear plantillas (enterprise)
 !.env.example
 !.env.*.example
 
-# Overrides locales
-.env.*.local
-*.local.env
+# IDE
+.vscode/
+.idea/
 
-# Tokens / temporales de autenticación
-.env.tokens
+# OS
+.DS_Store
+Thumbs.db
 
-# =========================
-# Secretos (NO commitear)
-# =========================
-.env.secrets
-.env.*.secrets
-*.secrets
-*.key
-*.pem
-
-# =========================
-# Backups / artifacts locales
-# =========================
-backups/
+# Logs
+*.log
