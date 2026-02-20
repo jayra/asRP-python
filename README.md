@@ -1,24 +1,33 @@
-# asRP-python — Catalog API con OIDC (OpenID Connect) + JWT (JSON Web Token) + RBAC (Role-Based Access Control)
+# asRP-python
 
-Stack de microservicios con Docker Compose y autenticación/autorización mediante Keycloak (OIDC).
-El microservicio `catalog-api` valida JWT y aplica RBAC por roles de cliente.
+Plataforma tipo ERP (Enterprise Resource Planning) en microservicios con Python (FastAPI) y Node.js (Express), autenticación centralizada con Keycloak y autorización por roles (RBAC: Role-Based Access Control).
 
-## Objetivo demostrable (portfolio)
-- Endpoint protegido: `GET /v1/products`
-- Autenticación: `Authorization: Bearer <JWT>`
-- Validación JWT: firma + claims (`iss` issuer, `aud` audience)
-- Autorización RBAC: rol `catalog_read` (client role en Keycloak)
+## Stack (local dev)
+- **WSL Ubuntu** + **Docker Compose**
+- **Keycloak** (OIDC: OpenID Connect) + **PostgreSQL**
+- **API Gateway** (Express) con proxy:
+  - `/catalog` → `catalog-api`
+  - `/orders` → `orders-api`
+- **catalog-api** (FastAPI) con OIDC/JWT + RBAC (`catalog_read`, `catalog_write`)
+- **orders-api** (FastAPI) con OIDC/JWT + RBAC (`orders_read`, `orders_write`)
+- **asrp-frontend** (Vite + React + oidc-client-ts) con Authorization Code + PKCE (Proof Key for Code Exchange)
 
-## Requisitos
-- Windows 11 + WSL (Windows Subsystem for Linux) con Ubuntu
-- Docker Desktop
-- `docker compose`
-- `curl`
-- `jq` (opcional, para inspección del OpenAPI)
+## Puertos
+- API Gateway: `http://localhost:4000`
+- Catalog API (directo): `http://localhost:8002`
+- Orders API (directo): `http://localhost:8003`
+- Identity API: `http://localhost:8001`
+- Keycloak: `http://localhost:8080`
+- Keycloak health/metrics: `http://localhost:9000`
 
-## Arranque del stack
-Desde la raíz del repo:
+## OIDC (OpenID Connect): issuer estable
+Issuer del realm `asrp`:
+- `http://keycloak.localtest.me:8080/realms/asrp`
 
+Discovery:
+- `http://keycloak.localtest.me:8080/realms/asrp/.well-known/openid-configuration`
+
+## Cómo arrancar (desarrollo)
 ```bash
 cd ~/work/asRP-python
 docker compose up -d --build
