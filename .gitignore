@@ -1,23 +1,97 @@
+# =========================
 # Python
+# =========================
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+
+# [ADD] Caches / tooling (enterprise)
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.cache/
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+*.cover
+*.py,cover
+nosetests.xml
+pytestdebug.log
+
+# Virtualenv
 .venv/
+venv/
+ENV/
+env/
 
+# =========================
 # Env (secrets y locales)
+# =========================
+# [KEEP] incluye .env.orders-api, .env.catalog-api, .env.*.secrets (si no están trackeados)
 .env
-.env.*
+.env.*              
 
-# [FIX] Permitimos commitear plantillas (enterprise)
+# [KEEP] Permitimos commitear plantillas (enterprise)
 !.env.example
 !.env.*.example
 
+# [ADD] Defensa extra: patrones típicos de secretos
+*.secrets
+*.secret
+secrets/
+**/secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# =========================
+# Runtime artifacts (local)
+# =========================
+# [ADD] Tokens / temporales (smoke-auth.sh guarda .tmp/tokens.env)
+.tmp/
+**/.tmp/
+
+# [ADD] Logs
+*.log
+logs/
+**/logs/
+
+# =========================
+# Node / Frontend (Vite + React)
+# =========================
+# [ADD] Dependencias y builds
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+**/build/
+.vite/
+**/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =========================
 # IDE
+# =========================
 .vscode/
 .idea/
 
+# =========================
 # OS
+# =========================
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
+# =========================
+# Docker / Compose overrides
+# =========================
+# [ADD] Overrides locales típicos (si los usas)
+docker-compose.override.yml
+compose.override.yml
