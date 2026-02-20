@@ -23,10 +23,8 @@ services:
     environment:
       - POSTGRES_DB=catalog_db
       - POSTGRES_USER=catalog_app
-      # [SECURITY] El password NO va aquí. Va en env_file (fichero ignorado por Git).
     env_file:
-      # [REFAC] Movido a services/catalog-api/
-      - ./services/catalog-api/.env.catalog-db.secrets # [SECURITY] POSTGRES_PASSWORD
+      - ./services/catalog-api/.env.catalog-db.secrets # POSTGRES_PASSWORD
     ports:
       - "5433:5432"
     volumes:
@@ -49,9 +47,8 @@ services:
     ports:
       - "8002:8000"
     env_file:
-      # [REFAC] Ya NO existe .env en raíz (y aunque existiera, es mejor por-servicio)
       - ./services/catalog-api/.env.catalog-api
-      - ./services/catalog-api/.env.catalog-api.secrets # [SECURITY] ignorado por Git
+      - ./services/catalog-api/.env.catalog-api.secrets
     depends_on:
       catalog-db:
         condition: service_healthy
@@ -67,10 +64,8 @@ services:
     environment:
       - POSTGRES_DB=catalog_test_db
       - POSTGRES_USER=catalog_test_app
-      # [SECURITY] El password NO va aquí. Va en env_file.
     env_file:
-      # [REFAC] Movido a services/catalog-api/
-      - ./services/catalog-api/.env.catalog-test-db.secrets # [SECURITY] POSTGRES_PASSWORD
+      - ./services/catalog-api/.env.catalog-test-db.secrets # POSTGRES_PASSWORD
     ports:
       - "5434:5432"
     tmpfs:
@@ -92,9 +87,8 @@ services:
     environment:
       - POSTGRES_DB=keycloak
       - POSTGRES_USER=keycloak
-      # [SECURITY] El password NO va aquí. Va en env_file.
     env_file:
-      - .env.keycloak-db.secrets # [SECURITY] POSTGRES_PASSWORD (en raíz, OK)
+      - .env.keycloak-db.secrets # POSTGRES_PASSWORD
     volumes:
       - keycloak_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -111,110 +105,60 @@ services:
   # -------------------------
   keycloak:
     image: quay.io/keycloak/keycloak:25.0.6
-
-    # start-dev SOLO en local. En cloud: "start" + TLS/Proxy/hostname strict.
     command: ["start-dev", "--health-enabled=true", "--metrics-enabled=true"]
-
     environment:
-      # --- DB ---
       KC_DB: postgres
       KC_DB_URL_HOST: keycloak-db
       KC_DB_URL_DATABASE: keycloak
       KC_DB_USERNAME: keycloak
-      # [SECURITY] KC_DB_PASSWORD viene desde env_file (.env.keycloak.secrets)
 
-      # --- HTTP/Proxy/Hostname (issuer estable) ---
-      #
-      # [ENTERPRISE] Objetivo: que el issuer (iss) de los JWT (JSON Web Token) sea SIEMPRE el mismo,
-      # tanto para browser/host como para tráfico dentro de Docker.
-      #
-      # Con esto, el issuer y el discovery/jwks se publican con:
-      #   http://keycloak.localtest.me:8080
       KC_HTTP_ENABLED: "true"
       KC_PROXY: edge
 
       KC_HOSTNAME: keycloak.localtest.me
-      KC_HOSTNAME_URL: "http://keycloak.localtest.me:8080"       # [ENTERPRISE] issuer/metadata estable
-      KC_HOSTNAME_ADMIN_URL: "http://keycloak.localtest.me:8080" # [ENTERPRISE] admin console estable
+      KC_HOSTNAME_URL: "http://keycloak.localtest.me:8080"
+      KC_HOSTNAME_ADMIN_URL: "http://keycloak.localtest.me:8080"
 
-      # [DEV] En cloud: KC_HOSTNAME_STRICT=true y KC_HOSTNAME_STRICT_HTTPS=true con HTTPS real.
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_STRICT_HTTPS: "false"
 
-      # --- Observabilidad ---
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
 
     env_file:
-      - .env.keycloak.secrets # [SECURITY] KEYCLOAK_ADMIN / KEYCLOAK_ADMIN_PASSWORD / KC_DB_PASSWORD
-
+      - .env.keycloak.secrets # KEYCLOAK_ADMIN / KEYCLOAK_ADMIN_PASSWORD / KC_DB_PASSWORD
     ports:
       - "8080:8080"
       - "9000:9000"
-
     depends_on:
       keycloak-db:
         condition: service_healthy
-
     healthcheck:
-      # [FIX] Fallback curl/wget (algunas imágenes no traen curl).
+      # CHANGE: healthcheck sin curl/wget/busybox. Usa bash + /dev/tcp (disponible porque /bin/sh -> bash)
       test:
         [
           "CMD-SHELL",
-          "sh -lc 'command -v curl >/dev/null && curl -fsS http://localhost:9000/health/ready || wget -qO- http://localhost:9000/health/ready | grep -q \"\\\"status\\\":\\\"UP\\\"\"'"
+          "bash -lc 'exec 3<>/dev/tcp/127.0.0.1/9000 && printf \"GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3 && cat <&3 | grep -q \"\\\"status\\\"[[:space:]]*:[[:space:]]*\\\"UP\\\"\"'"
         ]
       interval: 10s
       timeout: 5s
       retries: 15
-
     networks:
       backend:
         aliases:
-          # [ENTERPRISE] Alias DNS interno para que los contenedores puedan usar el hostname “público”.
           - keycloak.localtest.me
     restart: unless-stopped
 
   # -------------------------
-  # API Gateway (Express)
+  # Orders DB
   # -------------------------
-  api-gateway:
-    build:
-      context: ./services/api-gateway
-    environment:
-      PORT: "4000"
-      CATALOG_UPSTREAM: "http://catalog-api:8000"
-      ORDERS_UPSTREAM: "http://orders-api:8000" # [ENTERPRISE] Upstream interno para Orders
-
-      # [ENTERPRISE] Alinear issuer + JWKS (JSON Web Key Set) a hostname estable
-      KEYCLOAK_ISSUER: "http://keycloak.localtest.me:8080/realms/asrp"
-      KEYCLOAK_JWKS_URL: "http://keycloak.localtest.me:8080/realms/asrp/protocol/openid-connect/certs"
-      EXPECTED_AUDIENCE: "asrp-catalog"
-      # [ORDERS] Audience esperado para rutas /orders (NO reutilizar el de catálogo)
-      ORDERS_EXPECTED_AUDIENCE: "asrp-orders"
-    ports:
-      - "4000:4000"
-    depends_on:
-      - keycloak
-      - catalog-api
-    networks:
-      - backend
-    restart: unless-stopped
-
-  # -------------------------
-  # Orders (próximo microservicio) - profile opcional
-  # -------------------------
-  # Para activarlo cuando lo implementemos:
-  #   docker compose --profile orders up -d --build
   orders-db:
-    profiles: ["orders"]
     image: postgres:16
     environment:
       - POSTGRES_DB=orders_db
       - POSTGRES_USER=orders_app
-      # [SECURITY] El password NO va aquí. Va en env_file.
     env_file:
-      # [REFAC] Movido a services/orders-api/
-      - ./services/orders-api/.env.orders-db.secrets # [SECURITY] POSTGRES_PASSWORD (ignorado por Git)
+      - ./services/orders-api/.env.orders-db.secrets # POSTGRES_PASSWORD
     ports:
       - "5435:5432"
     volumes:
@@ -228,19 +172,55 @@ services:
       - backend
     restart: unless-stopped
 
+  # -------------------------
+  # Orders API
+  # -------------------------
   orders-api:
-    profiles: ["orders"]
     build:
       context: ./services/orders-api
     ports:
       - "8003:8000"
     env_file:
-      # [REFAC] Ya NO existe .env en raíz (y aunque existiera, es mejor por-servicio)
       - ./services/orders-api/.env.orders-api
       - ./services/orders-api/.env.orders-api.secrets
     depends_on:
       orders-db:
         condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # -------------------------
+  # API Gateway (Express)
+  # -------------------------
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+    environment:
+      PORT: "4000"
+      CATALOG_UPSTREAM: "http://catalog-api:8000"
+      ORDERS_UPSTREAM: "http://orders-api:8000"
+
+      KEYCLOAK_ISSUER: "http://keycloak.localtest.me:8080/realms/asrp"
+      KEYCLOAK_JWKS_URL: "http://keycloak.localtest.me:8080/realms/asrp/protocol/openid-connect/certs"
+
+      EXPECTED_AUDIENCE: "asrp-catalog"
+      ORDERS_EXPECTED_AUDIENCE: "asrp-orders"
+
+      CORS_ALLOWED_ORIGINS: "http://localhost:5173"
+      CORS_ALLOW_CREDENTIALS: "false"
+
+      JSON_BODY_LIMIT: "1mb"
+      URLENCODED_BODY_LIMIT: "1mb"
+
+      TRUST_PROXY: "false"
+      PROXY_DEBUG: "false"
+    ports:
+      - "4000:4000"
+    depends_on:
+      # CHANGE: NO dependemos de orders-api para que `docker compose up api-gateway` no falle
+      - keycloak
+      - catalog-api
     networks:
       - backend
     restart: unless-stopped

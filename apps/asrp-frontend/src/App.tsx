@@ -1,14 +1,10 @@
-// apps/asrp-frontend/src/App.tsx
-
-// [FIX] Quitar default import React (no se usa con JSX runtime moderno en Vite)
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { User, UserManager, WebStorageStateStore, Log } from "oidc-client-ts";
 
 const OIDC_AUTHORITY = import.meta.env.VITE_OIDC_AUTHORITY as string;
 const OIDC_CLIENT_ID = import.meta.env.VITE_OIDC_CLIENT_ID as string;
 const OIDC_REDIRECT_URI = import.meta.env.VITE_OIDC_REDIRECT_URI as string;
-const OIDC_POST_LOGOUT_REDIRECT_URI = import.meta.env
-  .VITE_OIDC_POST_LOGOUT_REDIRECT_URI as string;
+const OIDC_POST_LOGOUT_REDIRECT_URI = import.meta.env.VITE_OIDC_POST_LOGOUT_REDIRECT_URI as string;
 const DEBUG_AUTH = (import.meta.env.VITE_DEBUG_AUTH as string) === "true";
 
 function decodeJwtPayload(token: string): any | null {
@@ -53,38 +49,31 @@ type ApiState =
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [oidcError, setOidcError] = useState<string | null>(null);
-  const [apiState, setApiState] = useState<ApiState>({ kind: "idle" });
+
+  // [FIX] Estados separados para evitar mezclar respuestas de endpoints distintos (Catalog vs Orders)
+  const [apiCatalogState, setApiCatalogState] = useState<ApiState>({ kind: "idle" });
+  const [apiOrdersState, setApiOrdersState] = useState<ApiState>({ kind: "idle" });
 
   useEffect(() => {
     let cancelled = false;
 
-    // [FIX] No usar "&&" (devuelve boolean). Debe devolver void | Promise<void>.
-    const onUserLoaded = (u: User): void => {
-      if (cancelled) return; // [FIX]
-      setUser(u);
-    };
-
-    // [FIX] Igual aquí (void).
-    const onUserUnloaded = (): void => {
-      if (cancelled) return; // [FIX]
-      setUser(null);
-    };
-
+    // [FIX] Eventos para refrescar UI sin F5 cuando se carga/descarga usuario
+    const onUserLoaded = (u: User) => !cancelled && setUser(u);
+    const onUserUnloaded = () => !cancelled && setUser(null);
     userManager.events.addUserLoaded(onUserLoaded);
     userManager.events.addUserUnloaded(onUserUnloaded);
 
-    const run = async (): Promise<void> => {
+    const run = async () => {
       try {
         const url = new URL(window.location.href);
         const code = url.searchParams.get("code");
         const state = url.searchParams.get("state");
         const hasAuthCode = !!code && !!state;
 
-        // Guard anti “code already used / code not valid”
+        // [FIX] Guard anti “code already used / code not valid”
+        // En dev puede ejecutarse el callback más de una vez.
         const cbKey = state ? `oidc_cb_done:${state}` : null;
-        const alreadyHandled = cbKey
-          ? sessionStorage.getItem(cbKey) === "1"
-          : false;
+        const alreadyHandled = cbKey ? sessionStorage.getItem(cbKey) === "1" : false;
 
         if (hasAuthCode && !alreadyHandled) {
           if (cbKey) sessionStorage.setItem(cbKey, "1");
@@ -103,15 +92,14 @@ export default function App() {
           setOidcError(e?.message || "OIDC error");
           setUser(null);
 
-          // Si el callback falla, limpia la URL igualmente para no quedar “atascado”
+          // [FIX] Si el callback falla, limpia la URL igualmente para no quedar “atascado”
           const clean = new URL(window.location.href);
           window.history.replaceState({}, document.title, clean.origin + clean.pathname);
         }
       }
     };
 
-    // [FIX] Evita warning de promesa no esperada en algunos linters/TS configs
-    void run();
+    run();
 
     return () => {
       cancelled = true;
@@ -121,35 +109,40 @@ export default function App() {
   }, []);
 
   const accessToken = user?.access_token ?? "";
-  const tokenPayload = useMemo(
-    () => (accessToken ? decodeJwtPayload(accessToken) : null),
-    [accessToken]
-  );
+  const tokenPayload = useMemo(() => (accessToken ? decodeJwtPayload(accessToken) : null), [accessToken]);
 
-  const roles = useMemo(
+  // [FIX] Roles por cliente (Keycloak): Catalog y Orders
+  const catalogRoles = useMemo(
     () => (tokenPayload ? getClientRoles(tokenPayload, "asrp-catalog") : []),
     [tokenPayload]
   );
-  const canReadCatalog = roles.includes("catalog_read");
+  const ordersRoles = useMemo(
+    () => (tokenPayload ? getClientRoles(tokenPayload, "asrp-orders") : []),
+    [tokenPayload]
+  );
+
+  const canReadCatalog = catalogRoles.includes("catalog_read");
+  // [FIX] Para Orders, permitir GET si el usuario tiene orders_read o orders_write (writer ⊇ read en la práctica)
+  const canReadOrders = ordersRoles.includes("orders_read") || ordersRoles.includes("orders_write");
 
   const isAuthenticated = !!user && !user.expired && !!accessToken;
 
-  const login = async (): Promise<void> => {
+  const login = async () => {
     setOidcError(null);
     await userManager.signinRedirect();
   };
 
-  const logout = async (): Promise<void> => {
+  const logout = async () => {
     setOidcError(null);
     await userManager.signoutRedirect();
   };
 
-  const callProducts = async (): Promise<void> => {
+  const callCatalogProducts = async () => {
     if (!isAuthenticated) {
-      setApiState({ kind: "error", message: "Not authenticated." });
+      setApiCatalogState({ kind: "error", message: "Not authenticated." });
       return;
     }
-    setApiState({ kind: "loading" });
+    setApiCatalogState({ kind: "loading" });
 
     try {
       // Ruta correcta: /api -> Vite proxy -> Gateway -> /catalog/...
@@ -163,12 +156,10 @@ export default function App() {
 
       const status = resp.status;
       const contentType = resp.headers.get("content-type") || "";
-      const body = contentType.includes("application/json")
-        ? await resp.json()
-        : await resp.text();
+      const body = contentType.includes("application/json") ? await resp.json() : await resp.text();
 
       if (!resp.ok) {
-        setApiState({
+        setApiCatalogState({
           kind: "error",
           status,
           message: typeof body === "string" ? body : JSON.stringify(body, null, 2),
@@ -176,9 +167,45 @@ export default function App() {
         return;
       }
 
-      setApiState({ kind: "success", status, body });
+      setApiCatalogState({ kind: "success", status, body });
     } catch (e: any) {
-      setApiState({ kind: "error", message: e?.message || "Fetch failed" });
+      setApiCatalogState({ kind: "error", message: e?.message || "Fetch failed" });
+    }
+  };
+
+  const callOrders = async () => {
+    if (!isAuthenticated) {
+      setApiOrdersState({ kind: "error", message: "Not authenticated." });
+      return;
+    }
+    setApiOrdersState({ kind: "loading" });
+
+    try {
+      // [FIX] Orders: /api -> Vite proxy -> Gateway -> /orders/...
+      const resp = await fetch("/api/orders/v1/orders", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+        },
+      });
+
+      const status = resp.status;
+      const contentType = resp.headers.get("content-type") || "";
+      const body = contentType.includes("application/json") ? await resp.json() : await resp.text();
+
+      if (!resp.ok) {
+        setApiOrdersState({
+          kind: "error",
+          status,
+          message: typeof body === "string" ? body : JSON.stringify(body, null, 2),
+        });
+        return;
+      }
+
+      setApiOrdersState({ kind: "success", status, body });
+    } catch (e: any) {
+      setApiOrdersState({ kind: "error", message: e?.message || "Fetch failed" });
     }
   };
 
@@ -186,8 +213,7 @@ export default function App() {
     <div style={{ maxWidth: 980, margin: "48px auto", padding: "0 16px" }}>
       <h1 style={{ marginBottom: 6 }}>asrp-frontend</h1>
       <p style={{ marginTop: 0, color: "#555" }}>
-        OIDC (OpenID Connect) Authorization Code + PKCE (Proof Key for Code Exchange) — API via{" "}
-        <code>/api</code>
+        OIDC (OpenID Connect) Authorization Code + PKCE (Proof Key for Code Exchange) — API via <code>/api</code>
       </p>
 
       {oidcError && (
@@ -205,22 +231,23 @@ export default function App() {
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 12, alignItems: "center", margin: "16px 0" }}>
-        {!isAuthenticated ? (
-          <button onClick={() => void login()}>Login</button> // [FIX] evita retorno Promise en handler
-        ) : (
-          <button onClick={() => void logout()}>Logout</button> // [FIX]
-        )}
+      <div style={{ display: "flex", gap: 12, alignItems: "center", margin: "16px 0", flexWrap: "wrap" }}>
+        {!isAuthenticated ? <button onClick={login}>Login</button> : <button onClick={logout}>Logout</button>}
 
         <button
-          onClick={() => void callProducts()} // [FIX]
-          disabled={!isAuthenticated || !canReadCatalog || apiState.kind === "loading"}
+          onClick={callCatalogProducts}
+          disabled={!isAuthenticated || !canReadCatalog || apiCatalogState.kind === "loading"}
         >
-          {apiState.kind === "loading" ? "Loading…" : "GET /catalog/v1/products"}
+          {apiCatalogState.kind === "loading" ? "Loading…" : "GET /catalog/v1/products"}
+        </button>
+
+        {/* [FIX] Nuevo bloque Orders (sin tocar login): mismo token + proxy /api */}
+        <button onClick={callOrders} disabled={!isAuthenticated || !canReadOrders || apiOrdersState.kind === "loading"}>
+          {apiOrdersState.kind === "loading" ? "Loading…" : "GET /orders/v1/orders"}
         </button>
 
         <span style={{ marginLeft: "auto", fontSize: 12, color: "#666" }}>
-          Gateway: <code>http://localhost:4000</code> — Catalog-API via proxy
+          Gateway: <code>http://localhost:4000</code> — Upstreams via proxy
         </span>
       </div>
 
@@ -233,11 +260,20 @@ export default function App() {
           <div>
             <b>User:</b> {tokenPayload?.preferred_username || user?.profile?.preferred_username || "-"}
           </div>
+
           <div>
-            <b>Roles (asrp-catalog):</b> {roles.length ? roles.join(", ") : "-"}
+            <b>Roles (asrp-catalog):</b> {catalogRoles.length ? catalogRoles.join(", ") : "-"}
           </div>
           <div>
             <b>Has role catalog_read:</b> {String(canReadCatalog)}
+          </div>
+
+          {/* [FIX] Orders roles visible para depurar RBAC (Role-Based Access Control) */}
+          <div style={{ marginTop: 8 }}>
+            <b>Roles (asrp-orders):</b> {ordersRoles.length ? ordersRoles.join(", ") : "-"}
+          </div>
+          <div>
+            <b>Has role orders_read / orders_write:</b> {String(canReadOrders)}
           </div>
         </div>
       </div>
@@ -249,28 +285,61 @@ export default function App() {
         </div>
       )}
 
-      <div style={{ border: "1px solid #e5e5e5", borderRadius: 10, padding: 16 }}>
-        <h3 style={{ marginTop: 0 }}>API response</h3>
-        {apiState.kind === "idle" && <p style={{ color: "#666" }}>Pulsa el botón para llamar vía /api → Gateway.</p>}
-        {apiState.kind === "loading" && <p>Loading…</p>}
-        {apiState.kind === "error" && (
-          <>
-            <div>
-              <b>Status:</b> {apiState.status ?? "-"}
-            </div>
-            <pre style={{ whiteSpace: "pre-wrap" }}>{apiState.message}</pre>
-          </>
-        )}
-        {apiState.kind === "success" && (
-          <>
-            <div style={{ marginBottom: 8 }}>
-              <b>Status:</b> {apiState.status}
-            </div>
-            <pre style={{ whiteSpace: "pre-wrap" }}>
-              {typeof apiState.body === "string" ? apiState.body : JSON.stringify(apiState.body, null, 2)}
-            </pre>
-          </>
-        )}
+      <div style={{ display: "grid", gap: 16 }}>
+        <div style={{ border: "1px solid #e5e5e5", borderRadius: 10, padding: 16 }}>
+          <h3 style={{ marginTop: 0 }}>Catalog API response</h3>
+          {apiCatalogState.kind === "idle" && (
+            <p style={{ color: "#666" }}>Pulsa el botón para llamar vía /api → Gateway → /catalog.</p>
+          )}
+          {apiCatalogState.kind === "loading" && <p>Loading…</p>}
+          {apiCatalogState.kind === "error" && (
+            <>
+              <div>
+                <b>Status:</b> {apiCatalogState.status ?? "-"}
+              </div>
+              <pre style={{ whiteSpace: "pre-wrap" }}>{apiCatalogState.message}</pre>
+            </>
+          )}
+          {apiCatalogState.kind === "success" && (
+            <>
+              <div style={{ marginBottom: 8 }}>
+                <b>Status:</b> {apiCatalogState.status}
+              </div>
+              <pre style={{ whiteSpace: "pre-wrap" }}>
+                {typeof apiCatalogState.body === "string"
+                  ? apiCatalogState.body
+                  : JSON.stringify(apiCatalogState.body, null, 2)}
+              </pre>
+            </>
+          )}
+        </div>
+
+        {/* [FIX] Orders: respuesta separada para evitar confusión visual */}
+        <div style={{ border: "1px solid #e5e5e5", borderRadius: 10, padding: 16 }}>
+          <h3 style={{ marginTop: 0 }}>Orders API response</h3>
+          {apiOrdersState.kind === "idle" && (
+            <p style={{ color: "#666" }}>Pulsa el botón para llamar vía /api → Gateway → /orders.</p>
+          )}
+          {apiOrdersState.kind === "loading" && <p>Loading…</p>}
+          {apiOrdersState.kind === "error" && (
+            <>
+              <div>
+                <b>Status:</b> {apiOrdersState.status ?? "-"}
+              </div>
+              <pre style={{ whiteSpace: "pre-wrap" }}>{apiOrdersState.message}</pre>
+            </>
+          )}
+          {apiOrdersState.kind === "success" && (
+            <>
+              <div style={{ marginBottom: 8 }}>
+                <b>Status:</b> {apiOrdersState.status}
+              </div>
+              <pre style={{ whiteSpace: "pre-wrap" }}>
+                {typeof apiOrdersState.body === "string" ? apiOrdersState.body : JSON.stringify(apiOrdersState.body, null, 2)}
+              </pre>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -34,6 +34,12 @@ ORDERS_ORDERS="$GATEWAY_BASE/orders/v1/orders"
 # Si Orders aún no está activo en tu compose, puedes poner esto a "false"
 RUN_ORDERS="${RUN_ORDERS:-true}"
 
+# CHANGE: Export opcional de tokens para poder decodificarlos fuera del script.
+# - DUMP_TOKENS=true    -> guarda .tmp/tokens.env (chmod 600) con TOKEN_* generados
+# - PRINT_PAYLOADS=true -> imprime el payload (claims) de los TOKEN_* (sin firma)
+DUMP_TOKENS="${DUMP_TOKENS:-false}"
+PRINT_PAYLOADS="${PRINT_PAYLOADS:-false}"
+
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
@@ -106,6 +112,25 @@ try:
   print("0" if (exp - now) > leeway else "1")
 except Exception:
   print("1")
+PY
+}
+
+# CHANGE: Decodifica el payload (claims) de un JWT (JSON Web Token) sin verificar firma.
+# Útil para inspeccionar iss (issuer), aud (audience), roles, etc.
+decode_jwt_payload() {
+  local token="$1"
+  T="$token" python3 - <<'PY'
+import os, json, base64, sys
+t=os.environ.get('T','')
+if not t or t.count('.') < 2:
+  sys.exit(1)
+p=t.split('.')[1]
+p += '=' * (-len(p) % 4)
+try:
+  data=json.loads(base64.urlsafe_b64decode(p))
+  print(json.dumps(data, indent=2, sort_keys=True))
+except Exception:
+  sys.exit(1)
 PY
 }
 
@@ -255,3 +280,50 @@ if [[ "$RUN_ORDERS" == "true" ]]; then
 fi
 
 echo "[✓] Smoke auth OK"
+
+# -----------------------------------------------------------------------------
+# CHANGE: Persistencia opcional de tokens para inspección posterior.
+# -----------------------------------------------------------------------------
+if [[ "$DUMP_TOKENS" == "true" ]]; then
+  mkdir -p .tmp
+  chmod 700 .tmp
+
+  # Guardamos SOLO los tokens generados en esta ejecución.
+  # Ojo: esto contiene secretos (access tokens). Mantener fuera de Git.
+  {
+    [[ -n "${TOKEN_CATALOG_WITH:-}" ]] && printf "TOKEN_CATALOG_WITH='%s'\n" "$TOKEN_CATALOG_WITH"
+    [[ -n "${TOKEN_CATALOG_NO:-}"   ]] && printf "TOKEN_CATALOG_NO='%s'\n" "$TOKEN_CATALOG_NO"
+    [[ -n "${TOKEN_ORDERS_READER:-}" ]] && printf "TOKEN_ORDERS_READER='%s'\n" "$TOKEN_ORDERS_READER"
+    [[ -n "${TOKEN_ORDERS_WRITER:-}" ]] && printf "TOKEN_ORDERS_WRITER='%s'\n" "$TOKEN_ORDERS_WRITER"
+    [[ -n "${TOKEN_ORDERS_NOROLE:-}" ]] && printf "TOKEN_ORDERS_NOROLE='%s'\n" "$TOKEN_ORDERS_NOROLE"
+  } > .tmp/tokens.env
+
+  chmod 600 .tmp/tokens.env
+  echo "[i] Tokens guardados en .tmp/tokens.env (chmod 600)"
+fi
+
+# CHANGE: Impresión opcional de payloads (claims) para validar iss/aud/roles.
+if [[ "$PRINT_PAYLOADS" == "true" ]]; then
+  echo "[i] JWT payloads (claims)"
+
+  if [[ -n "${TOKEN_CATALOG_WITH:-}" ]]; then
+    echo "==== TOKEN_CATALOG_WITH ===="
+    decode_jwt_payload "$TOKEN_CATALOG_WITH" || echo "[!] No pude decodificar TOKEN_CATALOG_WITH"
+  fi
+  if [[ -n "${TOKEN_CATALOG_NO:-}" ]]; then
+    echo "==== TOKEN_CATALOG_NO ===="
+    decode_jwt_payload "$TOKEN_CATALOG_NO" || echo "[!] No pude decodificar TOKEN_CATALOG_NO"
+  fi
+  if [[ -n "${TOKEN_ORDERS_READER:-}" ]]; then
+    echo "==== TOKEN_ORDERS_READER ===="
+    decode_jwt_payload "$TOKEN_ORDERS_READER" || echo "[!] No pude decodificar TOKEN_ORDERS_READER"
+  fi
+  if [[ -n "${TOKEN_ORDERS_WRITER:-}" ]]; then
+    echo "==== TOKEN_ORDERS_WRITER ===="
+    decode_jwt_payload "$TOKEN_ORDERS_WRITER" || echo "[!] No pude decodificar TOKEN_ORDERS_WRITER"
+  fi
+  if [[ -n "${TOKEN_ORDERS_NOROLE:-}" ]]; then
+    echo "==== TOKEN_ORDERS_NOROLE ===="
+    decode_jwt_payload "$TOKEN_ORDERS_NOROLE" || echo "[!] No pude decodificar TOKEN_ORDERS_NOROLE"
+  fi
+fi

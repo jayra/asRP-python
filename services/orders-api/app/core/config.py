@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from typing import List
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,6 +11,16 @@ class Settings(BaseSettings):
     app_name: str = "orders-api"
     environment: str = "local"
     log_level: str = "INFO"
+
+    # CHANGE: versión declarativa (para /health y trazabilidad)
+    app_version: str = "0.1.0"
+
+    # CHANGE: CORS (Cross-Origin Resource Sharing) allowlist (CSV)
+    cors_allowed_origins: str = "http://localhost:5173"
+    cors_allow_credentials: bool = False
+
+    def cors_origins_list(self) -> List[str]:
+        return [x.strip() for x in self.cors_allowed_origins.split(",") if x.strip()]
 
     # DB
     db_host: str = "orders-db"
@@ -21,7 +34,17 @@ class Settings(BaseSettings):
     oidc_issuer_expected: str = "http://keycloak.localtest.me:8080/realms/asrp"
     oidc_audience: str = "asrp-orders"
     oidc_leeway_seconds: int = 10
-    oidc_algorithms: str = "RS256"  # Comma-separated, e.g. "RS256"
+
+    # CHANGE: algoritmos como CSV pero con helper a lista (enterprise)
+    oidc_algorithms: str = "RS256"  # Comma-separated, e.g. "RS256,PS256"
+
+    def oidc_algorithms_list(self) -> List[str]:
+        return [x.strip() for x in self.oidc_algorithms.split(",") if x.strip()]
+
+    # CHANGE: cache/timeout OIDC (enterprise)
+    oidc_discovery_cache_seconds: int = 300
+    oidc_jwks_cache_seconds: int = 300
+    oidc_http_timeout_seconds: float = 3.0
 
     # RBAC
     rbac_client_id: str = "asrp-orders"  # resource_access.<client>.roles
