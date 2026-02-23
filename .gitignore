@@ -48,6 +48,18 @@ secrets/
 *.p12
 *.pfx
 
+# Stray build artifacts (accidental)
+CACHED
+=
+exporting/
+resolving/
+transferring/
+unpacking/
+naming/
+reading/
+resolve/
+[internal]
+
 # =========================
 # Runtime artifacts (local)
 # =========================
