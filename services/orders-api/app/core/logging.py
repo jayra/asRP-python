@@ -9,15 +9,14 @@ from pythonjsonlogger import jsonlogger
 from app.core.config import settings
 
 # Logger de servicio
-logger = logging.getLogger("catalog-api")
+logger = logging.getLogger("orders-api")
 
 
 class _SafeJsonFormatter(jsonlogger.JsonFormatter):
     """
-    JSON logger enterprise (python-json-logger).
-
-    - No falla si faltan campos extra (requestId, method, path, etc.)
-    - Mantiene compatibilidad con imports existentes (get_logger)
+    CHANGE (Observabilidad): JSON logger enterprise (python-json-logger)
+    - No falla si faltan campos extra (requestId, method, path, status, durationMs)
+    - Añade service/env para poder filtrar en agregadores de logs
     """
 
     DEFAULTS: Dict[str, Any] = {
@@ -26,7 +25,7 @@ class _SafeJsonFormatter(jsonlogger.JsonFormatter):
         "path": None,
         "status": None,
         "durationMs": None,
-        "service": "catalog-api",
+        "service": "orders-api",
         "env": None,
     }
 
@@ -37,13 +36,12 @@ class _SafeJsonFormatter(jsonlogger.JsonFormatter):
         for k, v in self.DEFAULTS.items():
             log_record.setdefault(k, v)
 
-        # CHANGE: si viene None, lo fijamos (setdefault no pisa valores None)
+        # CHANGE: si viene None, lo fijamos (setdefault no pisa None)
         if not log_record.get("service"):
-            log_record["service"] = "catalog-api"
+            log_record["service"] = "orders-api"
 
         if not log_record.get("env"):
             # CHANGE: fallback robusto para env
-            #log_record["env"] = getattr(settings, "environment", None)
             env = getattr(settings, "environment", None) or getattr(settings, "env", None) or "local"
             log_record["env"] = env
 
@@ -54,12 +52,13 @@ class _SafeJsonFormatter(jsonlogger.JsonFormatter):
 
 def configure_logging() -> None:
     """
-    - Logs estructurados JSON a stdout (container-friendly)
-    - Evita duplicados (restarts/reloads)
+    CHANGE (Observabilidad):
+    - Logs estructurados JSON (stdout), container-friendly
+    - Evita duplicados si uvicorn recarga
     - Alinea uvicorn.* al mismo nivel
     """
-    log_level = getattr(settings, "log_level", "INFO")
-    level = getattr(logging, str(log_level).upper(), logging.INFO)
+    level_name = getattr(settings, "log_level", "INFO")
+    level = getattr(logging, str(level_name).upper(), logging.INFO)
 
     root = logging.getLogger()
     root.setLevel(level)
@@ -71,11 +70,11 @@ def configure_logging() -> None:
     )
     handler.setFormatter(formatter)
 
-    # CHANGE: no duplicar handlers
+    # CHANGE: Evita duplicados
     root.handlers = [handler]
     root.propagate = False
 
-    # CHANGE: alinear uvicorn
+    # CHANGE: Uvicorn loggers alineados
     logging.getLogger("uvicorn").setLevel(level)
     logging.getLogger("uvicorn.error").setLevel(level)
     logging.getLogger("uvicorn.access").setLevel(level)
@@ -83,6 +82,6 @@ def configure_logging() -> None:
     logger.info("logging configured", extra={"requestId": None})
 
 
-# Compatibilidad retro con el código existente (app.core.auth importaba get_logger)
+# CHANGE: helper (compatibilidad/estandarización con catalog-api)
 def get_logger(name: Optional[str] = None) -> logging.Logger:
     return logging.getLogger(name or __name__)

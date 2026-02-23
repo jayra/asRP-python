@@ -7,18 +7,19 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.core.logging import logger
+from app.core.logging import get_logger
+
+logger = get_logger("catalog-api.request")
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # CHANGE: usa X-Request-Id si viene del Gateway; si no, genera uno
+        # CHANGE: usar X-Request-Id si llega desde el Gateway; si no, generar uno
         request_id = request.headers.get("x-request-id") or str(uuid4())
         request.state.request_id = request_id
 
         start = time.perf_counter()
 
-        # CHANGE: log start con campos estándar
         logger.info(
             "request start",
             extra={
@@ -34,10 +35,9 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 
         duration_ms = int((time.perf_counter() - start) * 1000)
 
-        # CHANGE: devolver siempre request id al cliente
+        # CHANGE: devolver siempre el id al cliente (y que vuelva al Gateway)
         response.headers["X-Request-Id"] = request_id
 
-        # CHANGE: log end con status + duración
         logger.info(
             "request end",
             extra={
