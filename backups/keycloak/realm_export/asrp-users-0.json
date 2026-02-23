@@ -1,0 +1,56 @@
+{
+  "realm" : "asrp",
+  "users" : [ {
+    "id" : "b0d3bbef-ad49-4cb9-ba3b-c0a9b255c8ae",
+    "username" : "asrp-catalog-reader",
+    "firstName" : "ASRP",
+    "lastName" : "CatalogReader",
+    "email" : "asrp-catalog-reader@local",
+    "emailVerified" : true,
+    "createdTimestamp" : 1769002752552,
+    "enabled" : true,
+    "totp" : false,
+    "credentials" : [ {
+      "id" : "16820c61-d513-46bb-b7e3-cdc26476b788",
+      "type" : "password",
+      "userLabel" : "My password",
+      "createdDate" : 1769012036222,
+      "secretData" : "{\"value\":\"+X3qKg5XKEbN5qydZUKKvFd+hIwhbAGW97xZiFsron0=\",\"salt\":\"CSR9MwsEUMVl6OBYeDkeBw==\",\"additionalParameters\":{}}",
+      "credentialData" : "{\"hashIterations\":5,\"algorithm\":\"argon2\",\"additionalParameters\":{\"hashLength\":[\"32\"],\"memory\":[\"7168\"],\"type\":[\"id\"],\"version\":[\"1.3\"],\"parallelism\":[\"1\"]}}"
+    } ],
+    "disableableCredentialTypes" : [ ],
+    "requiredActions" : [ ],
+    "realmRoles" : [ "default-roles-asrp" ],
+    "clientRoles" : {
+      "asrp-catalog" : [ "catalog_read" ]
+    },
+    "notBefore" : 0,
+    "groups" : [ ]
+  }, {
+    "id" : "5e3a7290-c388-4929-afa9-1fd63d359842",
+    "username" : "asrp-catalog-writer",
+    "firstName" : "ASRP",
+    "lastName" : "CatalogWriter",
+    "email" : "asrp-catalog-writer@local",
+    "emailVerified" : true,
+    "createdTimestamp" : 1769001836324,
+    "enabled" : true,
+    "totp" : false,
+    "credentials" : [ {
+      "id" : "63c73e9b-1cfa-4ef2-ba12-42d14fb6ea80",
+      "type" : "password",
+      "userLabel" : "My password",
+      "createdDate" : 1769012049695,
+      "secretData" : "{\"value\":\"qtD656Jn2AfUB+3wD1Da8gHGwkdPxlJAm3Bl8Ch0ezg=\",\"salt\":\"sdouELFBcmXDeRYPIztA8w==\",\"additionalParameters\":{}}",
+      "credentialData" : "{\"hashIterations\":5,\"algorithm\":\"argon2\",\"additionalParameters\":{\"hashLength\":[\"32\"],\"memory\":[\"7168\"],\"type\":[\"id\"],\"version\":[\"1.3\"],\"parallelism\":[\"1\"]}}"
+    } ],
+    "disableableCredentialTypes" : [ ],
+    "requiredActions" : [ ],
+    "realmRoles" : [ "default-roles-asrp" ],
+    "clientRoles" : {
+      "asrp-catalog" : [ "catalog_write" ]
+    },
+    "notBefore" : 0,
+    "groups" : [ ]
+  } ]
+}
