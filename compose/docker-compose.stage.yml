@@ -1,0 +1,18 @@
+# compose/docker-compose.stage.yml
+#
+# Overlay STAGE: parecido a prod-like, pero expone Keycloak si lo necesitas.
+#
+# USO:
+#   docker compose -f compose/docker-compose.prod.yml -f compose/docker-compose.stage.yml --profile stage up -d --build
+
+services:
+  keycloak:
+    profiles: ["stage"]
+    ports:
+      - "8080:8080"
+
+  api-gateway:
+    profiles: ["stage"]
+
+  frontend-web:
+    profiles: ["stage"]

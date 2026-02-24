@@ -1,0 +1,13 @@
+# compose/docker-compose.prodlike.local.yml
+#
+# Overlay: ejecutar prod-like en local publicando Keycloak para UI/smoke (kcadm).
+# Uso:
+#   docker compose -f compose/docker-compose.prod.yml -f compose/docker-compose.prodlike.local.yml --profile prodlike up -d
+
+services:
+  keycloak:
+    ports:
+      # [FIX] publicar Keycloak para smoke/kcadm en localhost
+      - "8080:8080"
+      # [FIX] opcional: management/health en localhost
+      - "9000:9000"

@@ -1,0 +1,21 @@
+# compose/docker-compose.local.yml
+#
+# Overlay LOCAL: expone Keycloak al host y deja el resto igual.
+#
+# USO:
+#   docker compose -f compose/docker-compose.prod.yml -f compose/docker-compose.local.yml --profile local up -d --build
+
+services:
+  keycloak:
+    profiles: ["local"]
+    ports:
+      # CAMBIO: en local sí publicamos Keycloak
+      - "8080:8080"
+
+  api-gateway:
+    profiles: ["local"]
+    environment:
+      UPSTREAM_TIMEOUT_MS: ${UPSTREAM_TIMEOUT_MS:-12000}
+
+  frontend-web:
+    profiles: ["local"]
