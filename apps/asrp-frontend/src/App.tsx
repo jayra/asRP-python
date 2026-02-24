@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+// apps/asrp-frontend/src/App.tsx
+import { useEffect, useMemo, useState } from "react"; // [FIX] Quitar React importado pero no usado (TS6133)
 import { User, UserManager, WebStorageStateStore, Log } from "oidc-client-ts";
 
 const OIDC_AUTHORITY = import.meta.env.VITE_OIDC_AUTHORITY as string;
@@ -58,8 +59,14 @@ export default function App() {
     let cancelled = false;
 
     // [FIX] Eventos para refrescar UI sin F5 cuando se carga/descarga usuario
-    const onUserLoaded = (u: User) => !cancelled && setUser(u);
-    const onUserUnloaded = () => !cancelled && setUser(null);
+    // [FIX] No retornar boolean (false) en callbacks: oidc-client-ts exige void | Promise<void> (TS2345)
+    const onUserLoaded = (u: User) => {
+      if (!cancelled) setUser(u); // [FIX] antes: !cancelled && setUser(u)
+    };
+    const onUserUnloaded = () => {
+      if (!cancelled) setUser(null); // [FIX] antes: !cancelled && setUser(null)
+    };
+
     userManager.events.addUserLoaded(onUserLoaded);
     userManager.events.addUserUnloaded(onUserUnloaded);
 
@@ -335,7 +342,9 @@ export default function App() {
                 <b>Status:</b> {apiOrdersState.status}
               </div>
               <pre style={{ whiteSpace: "pre-wrap" }}>
-                {typeof apiOrdersState.body === "string" ? apiOrdersState.body : JSON.stringify(apiOrdersState.body, null, 2)}
+                {typeof apiOrdersState.body === "string"
+                  ? apiOrdersState.body
+                  : JSON.stringify(apiOrdersState.body, null, 2)}
               </pre>
             </>
           )}

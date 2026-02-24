@@ -2,6 +2,25 @@
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
+# [FIX] Runner único de Compose para evitar apuntar a otro stack/proyecto.
+# - Si existe scripts/asrp-compose-prodlike.sh, lo usamos (prod-like correcto).
+# - Si no existe, usamos docker compose con los ficheros/envs prod-like.
+# -----------------------------------------------------------------------------
+dc() {
+  if [[ -x "./scripts/asrp-compose-prodlike.sh" ]]; then
+    ./scripts/asrp-compose-prodlike.sh "$@"
+  else
+    docker compose \
+      --env-file env/.env.prod \
+      --env-file env/.secrets.env \
+      -f compose/docker-compose.prod.yml \
+      -f compose/docker-compose.prodlike.local.yml \
+      --profile prodlike \
+      "$@"
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Smoke E2E (End-to-End) Auth Tests
 # - Gateway health
 # - Proxy health (Catalog + Orders)
@@ -45,7 +64,7 @@ PRINT_PAYLOADS="${PRINT_PAYLOADS:-false}"
 # -----------------------------------------------------------------------------
 
 echo "[i] 0) Preflight: docker compose disponible"
-docker compose version >/dev/null
+dc version >/dev/null
 
 echo "[i] 1) Gateway /health"
 curl -fsS "$GATEWAY_BASE/health" >/dev/null
@@ -66,10 +85,22 @@ if [[ "$RUN_ORDERS" == "true" ]]; then
 fi
 
 echo "[i] 4) Login kcadm (admin) para leer client secrets"
-KC_ADMIN="$(docker compose exec -T keycloak sh -lc 'printf %s "$KEYCLOAK_ADMIN"')"
-KC_PASS="$(docker compose exec -T keycloak sh -lc 'printf %s "$KEYCLOAK_ADMIN_PASSWORD"')"
 
-docker compose exec -T keycloak /opt/keycloak/bin/kcadm.sh config credentials \
+# -----------------------------------------------------------------------------
+# [FIX] Keycloak 26: preferir variables nuevas KC_BOOTSTRAP_ADMIN_* dentro del contenedor.
+# - Antes: leíamos KEYCLOAK_ADMIN / KEYCLOAK_ADMIN_PASSWORD -> en tu caso devolvía user vacío.
+# - Ahora: primero KC_BOOTSTRAP_ADMIN_USERNAME/PASSWORD, fallback a KEYCLOAK_ADMIN*.
+# -----------------------------------------------------------------------------
+KC_ADMIN="$(dc exec -T keycloak sh -lc 'printf %s "${KC_BOOTSTRAP_ADMIN_USERNAME:-${KEYCLOAK_ADMIN:-}}"')"  # [FIX]
+KC_PASS="$(dc exec -T keycloak sh -lc 'printf %s "${KC_BOOTSTRAP_ADMIN_PASSWORD:-${KEYCLOAK_ADMIN_PASSWORD:-}}"')" # [FIX]
+
+# [FIX] Guardrail: si sigue vacío, fallamos con mensaje claro
+if [[ -z "${KC_ADMIN:-}" || -z "${KC_PASS:-}" ]]; then
+  echo "[x] No pude leer credenciales admin dentro de keycloak (KC_BOOTSTRAP_ADMIN_* / KEYCLOAK_ADMIN_* vacías)" >&2
+  exit 1
+fi
+
+dc exec -T keycloak /opt/keycloak/bin/kcadm.sh config credentials \
   --server http://localhost:8080 \
   --realm master \
   --user "$KC_ADMIN" \
@@ -78,14 +109,14 @@ echo "[v] kcadm login OK"
 
 get_client_id() {
   local clientId="$1"
-  docker compose exec -T keycloak /opt/keycloak/bin/kcadm.sh get clients -r "$REALM" \
+  dc exec -T keycloak /opt/keycloak/bin/kcadm.sh get clients -r "$REALM" \
     -q "clientId=$clientId" --fields id --format csv \
     | tail -n 1 | tr -d '\r' | tr -d '"'
 }
 
 get_client_secret() {
   local cid="$1"
-  docker compose exec -T keycloak /opt/keycloak/bin/kcadm.sh get "clients/$cid/client-secret" -r "$REALM" \
+  dc exec -T keycloak /opt/keycloak/bin/kcadm.sh get "clients/$cid/client-secret" -r "$REALM" \
     --fields value --format csv \
     | tail -n 1 | tr -d '\r' | tr -d '"'
 }
@@ -140,7 +171,7 @@ get_token_cc_internal() {
   local client_secret="$2"
   local exec_service="${3:-catalog-api}"  # contenedor desde el que haces la llamada a keycloak:8080
 
-  docker compose exec -T "$exec_service" sh -lc \
+  dc exec -T "$exec_service" sh -lc \
     "python3 - <<'PY'
 import json, urllib.parse, urllib.request
 realm='$REALM'
@@ -216,6 +247,24 @@ echo "[i] 6) Catalog: tokens (M2M) + checks HTTP"
 get_or_refresh_token "TOKEN_CATALOG_WITH" "$CATALOG_CLIENT_WITH_ROLE" "$CAT_SECRET_WITH" "catalog-api"
 get_or_refresh_token "TOKEN_CATALOG_NO"   "$CATALOG_CLIENT_NO_ROLE"   "$CAT_SECRET_NO"   "catalog-api"
 
+# -----------------------------------------------------------------------------
+# [FIX] Dump temprano de tokens para diagnóstico (aunque falle 6.1/6.2).
+# - Antes solo se escribía al final; si fallaba 6.1/6.2 no existía .tmp/tokens.env
+# -----------------------------------------------------------------------------
+if [[ "$DUMP_TOKENS" == "true" ]]; then
+  mkdir -p .tmp
+  chmod 700 .tmp
+  {
+    [[ -n "${TOKEN_CATALOG_WITH:-}" ]] && printf "TOKEN_CATALOG_WITH='%s'\n" "$TOKEN_CATALOG_WITH"
+    [[ -n "${TOKEN_CATALOG_NO:-}"   ]] && printf "TOKEN_CATALOG_NO='%s'\n" "$TOKEN_CATALOG_NO"
+    [[ -n "${TOKEN_ORDERS_READER:-}" ]] && printf "TOKEN_ORDERS_READER='%s'\n" "${TOKEN_ORDERS_READER:-}"
+    [[ -n "${TOKEN_ORDERS_WRITER:-}" ]] && printf "TOKEN_ORDERS_WRITER='%s'\n" "${TOKEN_ORDERS_WRITER:-}"
+    [[ -n "${TOKEN_ORDERS_NOROLE:-}" ]] && printf "TOKEN_ORDERS_NOROLE='%s'\n" "${TOKEN_ORDERS_NOROLE:-}"
+  } > .tmp/tokens.env
+  chmod 600 .tmp/tokens.env
+  echo "[i] Tokens guardados (temprano) en .tmp/tokens.env (chmod 600)"
+fi
+
 echo "[i] 6.1) Catalog esperado 200 con rol"
 STATUS_200="$(http_code "$CATALOG_PRODUCTS" -H "Authorization: Bearer $TOKEN_CATALOG_WITH")"
 echo "[i] HTTP $STATUS_200"
@@ -260,6 +309,23 @@ if [[ "$RUN_ORDERS" == "true" ]]; then
   get_or_refresh_token "TOKEN_ORDERS_WRITER" "$ORDERS_CLIENT_WRITER" "$ORD_SECRET_WRITER" "orders-api"
   get_or_refresh_token "TOKEN_ORDERS_NOROLE" "$ORDERS_CLIENT_NOROLE" "$ORD_SECRET_NOROLE" "orders-api"
 
+  # -----------------------------------------------------------------------------
+  # [FIX] Si DUMP_TOKENS=true, re-escribimos tokens.env incluyendo Orders (por si falla 8.x).
+  # -----------------------------------------------------------------------------
+  if [[ "$DUMP_TOKENS" == "true" ]]; then
+    mkdir -p .tmp
+    chmod 700 .tmp
+    {
+      [[ -n "${TOKEN_CATALOG_WITH:-}" ]] && printf "TOKEN_CATALOG_WITH='%s'\n" "$TOKEN_CATALOG_WITH"
+      [[ -n "${TOKEN_CATALOG_NO:-}"   ]] && printf "TOKEN_CATALOG_NO='%s'\n" "$TOKEN_CATALOG_NO"
+      [[ -n "${TOKEN_ORDERS_READER:-}" ]] && printf "TOKEN_ORDERS_READER='%s'\n" "$TOKEN_ORDERS_READER"
+      [[ -n "${TOKEN_ORDERS_WRITER:-}" ]] && printf "TOKEN_ORDERS_WRITER='%s'\n" "$TOKEN_ORDERS_WRITER"
+      [[ -n "${TOKEN_ORDERS_NOROLE:-}" ]] && printf "TOKEN_ORDERS_NOROLE='%s'\n" "$TOKEN_ORDERS_NOROLE"
+    } > .tmp/tokens.env
+    chmod 600 .tmp/tokens.env
+    echo "[i] Tokens actualizados en .tmp/tokens.env (incluye Orders)"
+  fi
+
   echo "[i] 8.1) Orders esperado 200 con reader"
   S1="$(http_code "$ORDERS_ORDERS" -H "Authorization: Bearer $TOKEN_ORDERS_READER")"
   echo "[i] HTTP $S1"
@@ -283,13 +349,12 @@ echo "[✓] Smoke auth OK"
 
 # -----------------------------------------------------------------------------
 # CHANGE: Persistencia opcional de tokens para inspección posterior.
+# (Se mantiene tal cual para compatibilidad; ahora además existe el dump temprano.)
 # -----------------------------------------------------------------------------
 if [[ "$DUMP_TOKENS" == "true" ]]; then
   mkdir -p .tmp
   chmod 700 .tmp
 
-  # Guardamos SOLO los tokens generados en esta ejecución.
-  # Ojo: esto contiene secretos (access tokens). Mantener fuera de Git.
   {
     [[ -n "${TOKEN_CATALOG_WITH:-}" ]] && printf "TOKEN_CATALOG_WITH='%s'\n" "$TOKEN_CATALOG_WITH"
     [[ -n "${TOKEN_CATALOG_NO:-}"   ]] && printf "TOKEN_CATALOG_NO='%s'\n" "$TOKEN_CATALOG_NO"

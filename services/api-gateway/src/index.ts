@@ -6,7 +6,7 @@ import { createProxyMiddleware } from "http-proxy-middleware";
 import type { ClientRequest, IncomingMessage, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import crypto from "node:crypto";
-import { createRemoteJWKSet, jwtVerify, errors as JoseErrors, type JWTPayload } from "jose";
+import { createRemoteJWKSet, jwtVerify, errors as JoseErrors } from "jose";
 
 /**
  * API Gateway (Application Programming Interface Gateway)
@@ -27,9 +27,19 @@ const CATALOG_API_URL = process.env.CATALOG_UPSTREAM ?? "http://catalog-api:8000
 const ORDERS_API_URL = process.env.ORDERS_UPSTREAM ?? "http://orders-api:8000";
 
 // OIDC (OpenID Connect) / JWT (JSON Web Token)
-const KEYCLOAK_ISSUER = process.env.KEYCLOAK_ISSUER ?? "http://keycloak.localtest.me:8080/realms/asrp";
+// [FIX] Separación enterprise: issuer esperado (externo) != JWKS URL (interno).
+// - issuer esperado: debe coincidir con el claim "iss" del token (normalmente externo: keycloak.localtest.me)
+// - JWKS URL: debe ser alcanzable desde el contenedor (normalmente interno: http://keycloak:8080/...)
+const KEYCLOAK_ISSUER =
+  process.env.OIDC_ISSUER_EXPECTED ??
+  process.env.OIDC_ISSUER_URL ??
+  process.env.KEYCLOAK_ISSUER ??
+  "http://keycloak.localtest.me:8080/realms/asrp";
+
 const KEYCLOAK_JWKS_URL =
-  process.env.KEYCLOAK_JWKS_URL ?? `${KEYCLOAK_ISSUER}/protocol/openid-connect/certs`;
+  process.env.OIDC_JWKS_URL ??
+  process.env.KEYCLOAK_JWKS_URL ??
+  "http://keycloak:8080/realms/asrp/protocol/openid-connect/certs"; // [FIX] default interno docker
 
 // Audiences por ruta
 const EXPECTED_AUDIENCE_CATALOG = process.env.EXPECTED_AUDIENCE ?? ""; // e.g. asrp-catalog
@@ -165,7 +175,7 @@ async function verifyAccessToken(req: Request, expectedAudience?: string) {
   }
 
   try {
-    const options: any = { issuer: KEYCLOAK_ISSUER }; // CHANGE: valida iss estrictamente
+    const options: any = { issuer: KEYCLOAK_ISSUER }; // CHANGE: valida iss estrictamente (issuer esperado)
     if (expectedAudience && expectedAudience.length > 0) {
       options.audience = expectedAudience; // CHANGE: valida aud por ruta
     }
@@ -285,7 +295,7 @@ app.use(
             proxyReq.setHeader("x-forwarded-for", xfwd);
           }
         },
-        error: onProxyError as any,
+        error: onProxyError as any, // [FIX] tipo correcto (ServerResponse | Socket)
       },
 
       ...(proxyLogger ? { logger: proxyLogger } : {}),
@@ -328,13 +338,24 @@ app.use(
             proxyReq.setHeader("x-forwarded-for", xfwd);
           }
         },
-        error: onProxyError as any,
+        error: onProxyError as any, // [FIX] tipo correcto (ServerResponse | Socket)
       },
 
       ...(proxyLogger ? { logger: proxyLogger } : {}),
     } as any
   )
 );
+
+// Debug OIDC (solo para diagnóstico local)
+app.get("/debug/oidc", (req: Request, res: Response) => {
+  res.status(200).json({
+    issuer: KEYCLOAK_ISSUER,
+    jwks: KEYCLOAK_JWKS_URL,
+    expectedAudCatalog: EXPECTED_AUDIENCE_CATALOG,
+    expectedAudOrders: EXPECTED_AUDIENCE_ORDERS,
+    requestId: req.headers["x-request-id"] ?? null,
+  });
+});
 
 // =========================
 // 404
