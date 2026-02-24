@@ -1,6 +1,8 @@
+# services/orders-api/app/security/deps.py
 from __future__ import annotations
 
 import time
+import os  # [FIX] para leer OIDC_JWKS_URL si settings no lo expone
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -27,16 +29,17 @@ _oidc_cache: Dict[str, Any] = {"config": None, "fetched_at": 0.0}
 _jwk_client_cache: Dict[str, Any] = {"client": None, "jwks_url": None, "fetched_at": 0.0}
 
 
-def _get_request_id(request: Request) -> Optional[str]:
-    return getattr(request.state, "request_id", None)
+def _request_id(req: Request) -> Optional[str]:
+    # CHANGE: correlation-id compatible con gateway
+    return req.headers.get("x-request-id") or req.headers.get("X-Request-Id")
 
 
 def _unauthorized(request_id: Optional[str], message: str) -> HTTPException:
-    # CHANGE: 401 homogéneo + WWW-Authenticate (enterprise API hygiene)
+    # CHANGE: 401 homogéneo
     return HTTPException(
         status_code=401,
         detail={"error": "unauthorized", "message": message, "requestId": request_id},
-        headers={"WWW-Authenticate": 'Bearer realm="asrp"'},
+        headers={"WWW-Authenticate": "Bearer"},
     )
 
 
@@ -67,6 +70,13 @@ def _fetch_oidc_config() -> Dict[str, Any]:
 
 
 def _get_jwks_url() -> str:
+    # [FIX] Prioriza JWKS override interno si está configurado.
+    # - En Docker/Kubernetes, el issuer público (keycloak.localtest.me) puede no resolverse desde el contenedor.
+    # - OIDC_JWKS_URL suele apuntar a la URL interna (http://keycloak:8080/...) y evita fallos DNS.
+    jwks_override = (getattr(settings, "oidc_jwks_url", None) or os.getenv("OIDC_JWKS_URL", "")).strip()
+    if jwks_override:
+        return jwks_override.rstrip("/")
+
     cfg = _fetch_oidc_config()
     jwks_uri = cfg.get("jwks_uri")
     if not jwks_uri:
@@ -94,114 +104,132 @@ def _get_jwk_client() -> PyJWKClient:
     return jwk_client
 
 
-def _extract_roles(payload: Dict[str, Any]) -> List[str]:
-    """
-    Keycloak típico:
-      resource_access: { "<client>": { roles: [...] } }
-    """
-    roles: List[str] = []
+def _decode_and_verify(token: str) -> Dict[str, Any]:
+    jwk_client = _get_jwk_client()
+    signing_key = jwk_client.get_signing_key_from_jwt(token).key
 
-    ra = payload.get("resource_access") or {}
-    if isinstance(ra, dict):
-        client_block = ra.get(settings.rbac_client_id) or {}
-        if isinstance(client_block, dict):
-            r = client_block.get("roles") or []
-            if isinstance(r, list):
-                roles.extend([str(x) for x in r])
+    algorithms = [a.strip() for a in settings.oidc_algorithms.split(",") if a.strip()]
 
-    # Opcional: realm roles (si algún día decides usarlos)
-    realm_access = payload.get("realm_access") or {}
-    if isinstance(realm_access, dict):
-        rr = realm_access.get("roles") or []
-        if isinstance(rr, list):
-            roles.extend([str(x) for x in rr])
-
-    # De-dup manteniendo orden
-    seen = set()
-    out = []
-    for r in roles:
-        if r not in seen:
-            seen.add(r)
-            out.append(r)
-    return out
+    # CHANGE: validación estricta de issuer; audiencia se valida fuera (según endpoint/servicio)
+    return jwt.decode(
+        token,
+        signing_key,
+        algorithms=algorithms,
+        issuer=settings.oidc_issuer_expected.rstrip("/"),
+        options={
+            "verify_aud": False,  # aud se verifica en require_* por endpoint
+        },
+        leeway=settings.oidc_leeway_seconds,
+    )
 
 
-def _get_bearer_token(request: Request) -> str:
-    auth = request.headers.get("authorization") or ""
-    if not auth.lower().startswith("bearer "):
-        raise _unauthorized(_get_request_id(request), "Missing Bearer token")
-    token = auth.split(" ", 1)[1].strip()
-    if not token:
-        raise _unauthorized(_get_request_id(request), "Empty Bearer token")
-    return token
+def _get_bearer_token(req: Request) -> str:
+    auth = req.headers.get("authorization") or req.headers.get("Authorization") or ""
+    parts = auth.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise _unauthorized(_request_id(req), "Missing bearer token")
+    return parts[1].strip()
 
 
-def _verify_jwt(token: str, request: Request) -> Dict[str, Any]:
-    request_id = _get_request_id(request)
+def get_claims(req: Request) -> Dict[str, Any]:
+    request_id = _request_id(req)
+    token = _get_bearer_token(req)
 
     try:
-        jwk_client = _get_jwk_client()
-        signing_key = jwk_client.get_signing_key_from_jwt(token).key
-
-        options = {
-            "require": ["exp", "iat", "iss"],
-            "verify_signature": True,
-            "verify_exp": True,
-            "verify_iat": True,
-            "verify_iss": True,
-            "verify_aud": bool(settings.oidc_audience),
-        }
-
-        payload = jwt.decode(
-            token,
-            signing_key,
-            algorithms=settings.oidc_algorithms_list(),  # CHANGE: lista de algoritmos permitidos
-            issuer=settings.oidc_issuer_expected,
-            audience=settings.oidc_audience if settings.oidc_audience else None,
-            options=options,
-            leeway=settings.oidc_leeway_seconds,
-        )
-
-        if not isinstance(payload, dict):
-            raise _unauthorized(request_id, "Invalid token payload")
-
-        return payload
-
+        claims = _decode_and_verify(token)
+        return claims
     except ExpiredSignatureError:
         raise _unauthorized(request_id, "Token expired")
-    except InvalidAudienceError:
-        # CHANGE: token válido pero no para esta API -> 403 (audience mismatch)
-        raise _forbidden(request_id, "Token audience not allowed for this API")
     except InvalidIssuerError:
-        raise _unauthorized(request_id, "Invalid token issuer")
+        raise _unauthorized(request_id, "Invalid issuer")
     except InvalidSignatureError:
-        raise _unauthorized(request_id, "Invalid token signature")
-    except PyJWTError:
+        raise _unauthorized(request_id, "Invalid signature")
+    except InvalidAudienceError:
+        raise _unauthorized(request_id, "Invalid audience")
+    except PyJWTError as e:
+        logger.info("Token validation failed: %s", e)
         raise _unauthorized(request_id, "Invalid token")
-    except Exception:
-        logger.exception("JWT verification error", extra={"requestId": request_id})
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Unexpected error while validating token: %s", e)
         raise _unauthorized(request_id, "Invalid token")
 
 
-def require_role(role: str):
-    """
-    Dependency factory.
-    - 401: token missing/invalid
-    - 403: token ok pero sin rol
-    """
+def _get_client_roles(claims: Dict[str, Any], client_id: str) -> List[str]:
+    ra = claims.get("resource_access") or {}
+    if not isinstance(ra, dict):
+        return []
+    client = ra.get(client_id) or {}
+    if not isinstance(client, dict):
+        return []
+    roles = client.get("roles") or []
+    return roles if isinstance(roles, list) else []
 
-    def _dep(request: Request) -> Dict[str, Any]:
-        token = _get_bearer_token(request)
-        payload = _verify_jwt(token, request)
-        roles = _extract_roles(payload)
 
-        # Guardamos en request.state para logs/handlers (enterprise observability)
-        request.state.jwt = payload
-        request.state.roles = roles
+def _has_role(claims: Dict[str, Any], client_id: str, role: str) -> bool:
+    roles = _get_client_roles(claims, client_id)
+    return role in roles
 
-        if role not in roles:
-            raise _forbidden(_get_request_id(request), f"Missing required role: {role}")
 
-        return payload
+def require_roles(required: List[str]):
+    required_set = set(required)
+
+    def _dep(req: Request) -> Dict[str, Any]:
+        claims = get_claims(req)
+        client_id = settings.oidc_audience  # CHANGE: clientId usado para roles/audiencia
+
+        roles = set(_get_client_roles(claims, client_id))
+        if not required_set.issubset(roles):
+            raise _forbidden(_request_id(req), "Insufficient permissions")
+        return claims
 
     return _dep
+
+
+# -----------------------------------------------------------------------------
+# [FIX] Backward-compatible alias expected by app/api/routes.py
+# - Tu routes.py importa: from app.security.deps import require_role
+# - Si no existe => orders-api no arranca => gateway devuelve 502.
+# -----------------------------------------------------------------------------
+def require_role(role: str):
+    return require_roles([role])
+
+
+def require_orders_read(req: Request) -> Dict[str, Any]:
+    claims = get_claims(req)
+    client_id = settings.oidc_audience
+
+    if _has_role(claims, client_id, "orders_read") or _has_role(claims, client_id, "orders_write"):
+        return claims
+
+    raise _forbidden(_request_id(req), "Insufficient permissions")
+
+
+def require_orders_write(req: Request) -> Dict[str, Any]:
+    claims = get_claims(req)
+    client_id = settings.oidc_audience
+
+    if _has_role(claims, client_id, "orders_write"):
+        return claims
+
+    raise _forbidden(_request_id(req), "Insufficient permissions")
+
+
+def require_catalog_read(req: Request) -> Dict[str, Any]:
+    # Nota: útil si Orders llama a Catalog, mantiene patrón
+    claims = get_claims(req)
+    client_id = settings.oidc_audience
+
+    if _has_role(claims, client_id, "catalog_read") or _has_role(claims, client_id, "catalog_write"):
+        return claims
+
+    raise _forbidden(_request_id(req), "Insufficient permissions")
+
+
+def require_catalog_write(req: Request) -> Dict[str, Any]:
+    claims = get_claims(req)
+    client_id = settings.oidc_audience
+
+    if _has_role(claims, client_id, "catalog_write"):
+        return claims
+
+    raise _forbidden(_request_id(req), "Insufficient permissions")

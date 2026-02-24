@@ -1,11 +1,14 @@
+# services/catalog-api/app/core/security.py
 from __future__ import annotations
 
+import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
-from jose import jwt
-from jose.exceptions import JWTClaimsError, JWTError
+import jwt
+from jwt import PyJWKClient
+from jwt.exceptions import PyJWTError
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -17,88 +20,69 @@ class OIDCJWKSVerifier:
     """
     Verifies JWT (JSON Web Token) access tokens signed by Keycloak using the realm JWKS (JSON Web Key Set).
 
-    Design notes:
-    - We fetch OIDC (OpenID Connect) discovery from settings.oidc_discovery_url (internal URL).
-    - We validate issuer against settings.oidc_issuer_expected (public URL) to match the token's iss claim.
-    - python-jose does NOT support PyJWT's `leeway` parameter; we apply leeway manually for exp/nbf.
+    A1 (PyJWT):
+    - Use PyJWT + PyJWKClient to unify behavior with orders-api.
+    - Prefer OIDC_JWKS_URL (internal, e.g. http://keycloak:8080/...) to avoid DNS issues inside Docker/K8s.
+    - Validate issuer (iss) strictly against settings.oidc_issuer_expected.
+    - Validate audience (aud) against settings.oidc_audience.
     """
 
-    def __init__(self, discovery_url: str) -> None:
-        self._discovery_url = discovery_url
-        self._jwks_uri: Optional[str] = None
-        self._jwks_cache: Optional[Dict[str, Any]] = None
-        self._jwks_cache_ts: float = 0.0
-        self._jwks_cache_ttl_seconds: int = 300  # 5 minutes
+    def __init__(self, discovery_url: str, *, jwks_url_override: Optional[str] = None) -> None:
+        self._discovery_url = (discovery_url or "").strip()
+        self._jwks_url_override = (jwks_url_override or "").strip() or None
 
-    async def _get_jwks_uri(self) -> str:
-        if self._jwks_uri:
-            return self._jwks_uri
+        self._oidc_cache: Dict[str, Any] = {"config": None, "fetched_at": 0.0}
+        self._jwk_cache: Dict[str, Any] = {"client": None, "jwks_url": None, "fetched_at": 0.0}
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
+    async def _fetch_oidc_config(self) -> Dict[str, Any]:
+        # [FIX] discovery cacheado
+        now = time.time()
+        ttl = getattr(settings, "oidc_discovery_cache_seconds", 300)
+
+        if self._oidc_cache["config"] and (now - self._oidc_cache["fetched_at"]) < ttl:
+            return self._oidc_cache["config"]
+
+        async with httpx.AsyncClient(timeout=getattr(settings, "oidc_http_timeout_seconds", 3.0)) as client:
             r = await client.get(self._discovery_url)
             r.raise_for_status()
-            data = r.json()
+            cfg = r.json()
 
-        jwks_uri = data.get("jwks_uri")
-        if not jwks_uri or not isinstance(jwks_uri, str):
-            raise RuntimeError("OIDC discovery missing jwks_uri")
+        self._oidc_cache["config"] = cfg
+        self._oidc_cache["fetched_at"] = now
+        return cfg
 
-        self._jwks_uri = jwks_uri
-        return jwks_uri
+    async def _get_jwks_url(self) -> str:
+        # [FIX] Prioriza override explícito (env OIDC_JWKS_URL típico en prodlike)
+        override = self._jwks_url_override or (os.getenv("OIDC_JWKS_URL", "").strip() or None)
+        if override:
+            return override.rstrip("/")
 
-    async def _get_jwks(self) -> Dict[str, Any]:
+        cfg = await self._fetch_oidc_config()
+        jwks_uri = cfg.get("jwks_uri")
+        if isinstance(jwks_uri, str) and jwks_uri.strip():
+            return jwks_uri.strip().rstrip("/")
+
+        # Fallback razonable
+        return f"{settings.oidc_issuer_expected.rstrip('/')}/protocol/openid-connect/certs"
+
+    async def _get_jwk_client(self) -> PyJWKClient:
+        # [FIX] cache PyJWKClient por jwks_url + TTL
         now = time.time()
-        if self._jwks_cache and (now - self._jwks_cache_ts) < self._jwks_cache_ttl_seconds:
-            return self._jwks_cache
+        ttl = getattr(settings, "oidc_jwks_cache_seconds", 300)
+        jwks_url = await self._get_jwks_url()
 
-        jwks_uri = await self._get_jwks_uri()
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(jwks_uri)
-            r.raise_for_status()
-            jwks = r.json()
+        if (
+            self._jwk_cache["client"] is not None
+            and self._jwk_cache["jwks_url"] == jwks_url
+            and (now - self._jwk_cache["fetched_at"]) < ttl
+        ):
+            return self._jwk_cache["client"]
 
-        if not isinstance(jwks, dict) or "keys" not in jwks:
-            raise RuntimeError("Invalid JWKS response")
-
-        self._jwks_cache = jwks
-        self._jwks_cache_ts = now
-        return jwks
-
-    @staticmethod
-    def _pick_key(jwks: Dict[str, Any], kid: str) -> Dict[str, Any]:
-        keys = jwks.get("keys", [])
-        if not isinstance(keys, list):
-            raise RuntimeError("JWKS keys is not a list")
-
-        for k in keys:
-            if isinstance(k, dict) and k.get("kid") == kid:
-                return k
-
-        raise RuntimeError(f"Signing key not found for kid={kid!r}")
-
-    @staticmethod
-    def _manual_time_claim_checks(claims: Dict[str, Any], leeway_seconds: int) -> None:
-        now = int(time.time())
-
-        # exp: token must not be expired (allow leeway)
-        exp = claims.get("exp")
-        if exp is not None:
-            try:
-                exp_i = int(exp)
-            except Exception as e:  # noqa: BLE001
-                raise JWTClaimsError("Invalid exp claim") from e
-            if now > (exp_i + leeway_seconds):
-                raise JWTClaimsError("Token has expired")
-
-        # nbf: token must be valid yet (allow leeway)
-        nbf = claims.get("nbf")
-        if nbf is not None:
-            try:
-                nbf_i = int(nbf)
-            except Exception as e:  # noqa: BLE001
-                raise JWTClaimsError("Invalid nbf claim") from e
-            if now < (nbf_i - leeway_seconds):
-                raise JWTClaimsError("Token not yet valid (nbf)")
+        client = PyJWKClient(jwks_url)
+        self._jwk_cache["client"] = client
+        self._jwk_cache["jwks_url"] = jwks_url
+        self._jwk_cache["fetched_at"] = now
+        return client
 
     async def decode_and_verify(
         self,
@@ -107,49 +91,26 @@ class OIDCJWKSVerifier:
         audience_expected: str,
         issuer_expected: str,
         leeway_seconds: int = 10,
-        algorithms: Optional[list[str]] = None,
+        algorithms: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """
-        Decode and verify a JWT access token, returning its claims.
-
-        Raises jose.exceptions.JWTError/JWTClaimsError on validation errors.
-        """
         token = (token or "").strip()
         if not token:
-            raise JWTError("Empty token")
+            raise PyJWTError("Empty token")
 
         algorithms = algorithms or settings.oidc_algorithms_list
+        issuer_expected = (issuer_expected or "").rstrip("/")
 
-        # Read header to select the correct signing key (kid).
-        try:
-            header = jwt.get_unverified_header(token)
-        except Exception as e:  # noqa: BLE001
-            raise JWTError("Invalid JWT header") from e
+        jwk_client = await self._get_jwk_client()
+        signing_key = jwk_client.get_signing_key_from_jwt(token).key
 
-        kid = header.get("kid")
-        if not kid:
-            raise JWTError("Missing kid in JWT header")
-
-        jwks = await self._get_jwks()
-        key = self._pick_key(jwks, kid)
-
-        # python-jose has no `leeway` kwarg; do exp/nbf checks ourselves with tolerance.
-        options = {
-            "verify_signature": True,
-            "verify_aud": True,
-            "verify_iss": True,
-            "verify_exp": False,
-            "verify_nbf": False,
-        }
-
+        # PyJWT valida aud/iss/exp con leeway nativo (enterprise-friendly)
         claims = jwt.decode(
             token,
-            key,
+            signing_key,
             algorithms=algorithms,
             audience=audience_expected,
-            issuer=issuer_expected.rstrip("/"),
-            options=options,
+            issuer=issuer_expected,
+            leeway=leeway_seconds,
+            options={"verify_signature": True, "verify_aud": True, "verify_iss": True, "verify_exp": True},
         )
-
-        self._manual_time_claim_checks(claims, leeway_seconds)
         return claims
