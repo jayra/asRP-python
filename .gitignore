@@ -48,6 +48,13 @@ secrets/
 *.p12
 *.pfx
 
+# --- asRP prod-like env/secrets ---
+env/.env.prod
+env/.secrets.env
+
+# --- Keycloak realm import (puede incluir secretos) ---
+keycloak/import/
+
 # Stray build artifacts (accidental)
 CACHED
 =
