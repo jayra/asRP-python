@@ -1,0 +1,60 @@
+
+## 2) `docs/architecture/diagram.mmd`
+```mermaid
+flowchart LR
+  U[Usuario / Navegador]
+
+  subgraph LOCAL["Local (Windows 11 + WSL2 + Docker Desktop)"]
+    direction TB
+
+    subgraph KIND["Kubernetes local (kind: Kubernetes IN Docker)"]
+      direction TB
+
+      subgraph INGRESS["Ingress (ingress-nginx) + TLS (cert-manager)"]
+        DNS["*.localtest.me → 127.0.0.1"]
+        TLS["TLS cert (self-signed) en Secret asrp-tls"]
+      end
+
+      subgraph NS["Namespace: asrp"]
+        KC["Keycloak (OIDC)\nService: keycloak:8080\nIngress: keycloak.localtest.me"]
+
+        FE["Frontend (Vite build) + NGINX unprivileged\nService: frontend:8080\nIngress: app.localtest.me"]
+
+        GW["API Gateway (Express)\nJWT verify + RBAC\nService: api-gateway:4000\nIngress: api.localtest.me"]
+
+        CAT["catalog-api (FastAPI)\n/health\nJWT verify + RBAC"]
+        ORD["orders-api (FastAPI)\n/health\nJWT verify + RBAC"]
+
+        CATDB[(catalog-db Postgres\nStatefulSet + PVC)]
+        ORDDB[(orders-db Postgres\nStatefulSet + PVC)]
+      end
+
+      NP["NetworkPolicy\nDefault deny + allow rules"]
+      HPA["HPA (api-gateway, catalog-api, orders-api)"]
+    end
+
+    subgraph COMPOSE["Docker Compose (prodlike previo)"]
+      C1["Keycloak + APIs + DBs + Frontend\n(prodlike Compose)"]
+    end
+  end
+
+  U -->|"HTTPS app.localtest.me"| FE
+  FE -->|"OIDC Auth Code + PKCE"| KC
+  FE -->|"HTTPS api.localtest.me\nBearer access_token"| GW
+
+  GW -->|"HTTP cluster /catalog/*"| CAT
+  GW -->|"HTTP cluster /orders/*"| ORD
+
+  CAT -->|"TCP 5432"| CATDB
+  ORD -->|"TCP 5432"| ORDDB
+
+  GW -->|"Discovery/JWKS interno"| KC
+  CAT -->|"Discovery/JWKS interno"| KC
+  ORD -->|"Discovery/JWKS interno"| KC
+
+  NP -.-> GW
+  NP -.-> CAT
+  NP -.-> ORD
+  HPA -.-> GW
+  HPA -.-> CAT
+  HPA -.-> ORD
