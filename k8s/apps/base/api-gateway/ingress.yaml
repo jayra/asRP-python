@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api
+  namespace: asrp
+  annotations:
+    # Comentario: opcional en local, pero útil para evitar rarezas de HTTP/2 con algunos backends.
+    nginx.ingress.kubernetes.io/use-http2: "false"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.localtest.me
+      secretName: asrp-tls
+  rules:
+    - host: api.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 4000

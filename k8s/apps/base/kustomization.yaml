@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+
+  # NetworkPolicies (enterprise hardening)
+  - networkpolicy-default-deny.yaml
+  - networkpolicy-allow-dns.yaml
+  - networkpolicy-allow-ingress-from-ingress-nginx.yaml
+  - networkpolicy-allow-gateway-egress.yaml
+  - networkpolicy-allow-apis-ingress-from-gateway.yaml
+  - networkpolicy-allow-apis-egress.yaml
+  - networkpolicy-allow-db-ingress.yaml
+
+  # HPA (Horizontal Pod Autoscaler)
+  - hpa-api-gateway.yaml
+  - hpa-catalog-api.yaml
+  - hpa-orders-api.yaml
+
+  - keycloak/deployment.yaml
+  - keycloak/service.yaml
+  - keycloak/ingress.yaml
+
+  - api-gateway/configmap.yaml
+  - api-gateway/deployment.yaml
+  - api-gateway/service.yaml
+  - api-gateway/ingress.yaml
+
+  - catalog-api/db-service.yaml
+  - catalog-api/db-statefulset.yaml
+  - catalog-api/configmap.yaml
+  - catalog-api/deployment.yaml
+  - catalog-api/service.yaml
+
+  - orders-api/db-service.yaml
+  - orders-api/db-statefulset.yaml
+  - orders-api/configmap.yaml
+  - orders-api/deployment.yaml
+  - orders-api/service.yaml
+
+  - frontend/deployment.yaml
+  - frontend/service.yaml
+  - frontend/ingress.yaml

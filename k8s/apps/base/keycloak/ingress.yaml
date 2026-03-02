@@ -1,0 +1,30 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keycloak
+  namespace: asrp
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+    # Comentario: evitar problemas HTTP/2 con algunos backends (Keycloak/Quarkus) en local.
+    nginx.ingress.kubernetes.io/use-http2: "false"
+    # Comentario: asegurar que NGINX pasa correctamente los headers de proxy.
+    #nginx.ingress.kubernetes.io/configuration-snippet: |
+    #  proxy_set_header X-Forwarded-Proto $scheme;
+    #  proxy_set_header X-Forwarded-Host $host;
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - keycloak.localtest.me
+      secretName: asrp-tls
+  rules:
+    - host: keycloak.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: keycloak
+                port:
+                  number: 8080

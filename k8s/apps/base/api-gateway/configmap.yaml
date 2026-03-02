@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-gateway-config
+  namespace: asrp
+data:
+  # Comentario: issuer EXTERNO (lo que verán navegador/cliente). En tu Keycloak ya sale como https en discovery.
+  OIDC_ISSUER_EXPECTED: "https://keycloak.localtest.me/realms/asrp"
+
+  # Comentario: discovery/JWKS INTERNOS (dentro del cluster, Service DNS).
+  OIDC_DISCOVERY_URL: "http://keycloak.asrp.svc.cluster.local:8080/realms/asrp/.well-known/openid-configuration"
+  OIDC_JWKS_URL: "http://keycloak.asrp.svc.cluster.local:8080/realms/asrp/protocol/openid-connect/certs"
+
+  # Comentario: upstreams internos (Service DNS).
+  CATALOG_UPSTREAM: "http://catalog-api.asrp.svc.cluster.local:8000"
+  ORDERS_UPSTREAM: "http://orders-api.asrp.svc.cluster.local:8000"
+
+  # Comentario (FIX): audiencias esperadas para RBAC por client-roles.
+  # Deben coincidir con el clientId que aparece en el token:
+  # - resource_access["asrp-catalog"].roles
+  # - resource_access["asrp-orders"].roles
+  CATALOG_EXPECTED_AUDIENCE: "asrp-catalog"
+  ORDERS_EXPECTED_AUDIENCE: "asrp-orders"
+
+  # Comentario: puerto del gateway (por defecto 4000).
+  PORT: "4000"

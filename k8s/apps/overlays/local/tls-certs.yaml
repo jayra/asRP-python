@@ -1,0 +1,14 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: asrp-localtest
+  namespace: asrp
+spec:
+  secretName: asrp-tls
+  issuerRef:
+    name: asrp-selfsigned
+    kind: ClusterIssuer
+  dnsNames:
+    - keycloak.localtest.me
+    - api.localtest.me
+    - app.localtest.me

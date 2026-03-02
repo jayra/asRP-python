@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalog-api-config
+  namespace: asrp
+data:
+  # Comentario: issuer EXTERNO (coincide con discovery público de Keycloak en K8s).
+  OIDC_ISSUER_EXPECTED: "https://keycloak.localtest.me/realms/asrp"
+
+  # Comentario: discovery/JWKS INTERNOS (cluster DNS).
+  OIDC_DISCOVERY_URL: "http://keycloak.asrp.svc.cluster.local:8080/realms/asrp/.well-known/openid-configuration"
+  OIDC_JWKS_URL: "http://keycloak.asrp.svc.cluster.local:8080/realms/asrp/protocol/openid-connect/certs"
+
+  # Comentario: DB (no secreto)
+  DB_HOST: "catalog-db.asrp.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "catalog"
+  DB_USER: "asrp_catalog_app"
+
+  # Comentario: logging (si tu app lo soporta; si no, no pasa nada)
+  LOG_LEVEL: "INFO"

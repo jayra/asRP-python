@@ -1,0 +1,38 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-egress
+  namespace: asrp
+spec:
+  podSelector:
+    matchLabels:
+      app: api-gateway
+  policyTypes:
+    - Egress
+  egress:
+    # Keycloak (discovery/JWKS internos)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+
+    # catalog-api upstream
+    - to:
+        - podSelector:
+            matchLabels:
+              app: catalog-api
+      ports:
+        - protocol: TCP
+          port: 8000
+
+    # orders-api upstream
+    - to:
+        - podSelector:
+            matchLabels:
+              app: orders-api
+      ports:
+        - protocol: TCP
+          port: 8000

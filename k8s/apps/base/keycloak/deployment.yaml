@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: asrp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      volumes:
+        # Comentario (IMPORT): montamos el export del realm como Secret (NO ConfigMap) porque contiene secretos/keys.
+        - name: realm-import
+          secret:
+            secretName: keycloak-realm-import
+
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:25.0
+          args:
+            # Comentario: modo local rápido. En fase enterprise lo moveremos a Postgres + modo production.
+            - "start-dev"
+            - "--http-enabled=true"
+            - "--proxy=edge"
+            - "--hostname=keycloak.localtest.me"
+            # Comentario (IMPORT): Keycloak importa realms desde /opt/keycloak/data/import al arrancar.
+            - "--import-realm"
+          env:
+            - name: KEYCLOAK_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: username
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: password
+          ports:
+            - name: http
+              containerPort: 8080
+
+          volumeMounts:
+            # Comentario (IMPORT): Keycloak lee imports desde este directorio.
+            - name: realm-import
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+
+          # Comentario (FIX): Keycloak (Quarkus) puede tardar bastante en abrir el puerto 8080.
+          # Usamos startupProbe para dar margen y evitar CrashLoop por liveness/readiness tempranos.
+          startupProbe:
+            tcpSocket:
+              port: 8080
+            # 60 * 5s = 300s (5 minutos) de margen de arranque
+            failureThreshold: 60
+            periodSeconds: 5
+            timeoutSeconds: 1
+
+          # Comentario (FIX): readiness solo comprueba que el puerto está abierto.
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 6
+
+          # Comentario (FIX): liveness más conservador para no matar durante warmup.
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 6
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
