@@ -1,4 +1,4 @@
-# Checkpoint: checkpoint-p2-hardening
+# Checkpoint-p2-hardening
 
 ## Git
 - Tag: `checkpoint-p2-hardening`
