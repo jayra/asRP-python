@@ -1,5 +1,10 @@
 
-# checkpoint-p2-hardening.md
+---
+
+# 2) `docs/checkpoints/checkpoint-p2-hardening.md`
+
+```md
+# Checkpoint: checkpoint-p2-hardening
 
 ## Git
 - Tag: `checkpoint-p2-hardening`
