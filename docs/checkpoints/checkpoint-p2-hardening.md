@@ -1,9 +1,3 @@
-
----
-
-# 2) `docs/checkpoints/checkpoint-p2-hardening.md`
-
-```md
 # Checkpoint: checkpoint-p2-hardening
 
 ## Git
