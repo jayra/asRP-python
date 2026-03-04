@@ -117,3 +117,6 @@ Thumbs.db
 # [ADD] Overrides locales típicos (si los usas)
 docker-compose.override.yml
 compose.override.yml
+
+# Backups (no commitear)
+backups/
